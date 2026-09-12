@@ -709,6 +709,27 @@ export const AntigravityIcon: Icon = (props) => (
   </svg>
 );
 
+// Hermes ships a pixel wordmark, not a glyph. This mark keeps the banner's
+// gold fill and its thin offset-outline echo as a legible monogram.
+export const HermesIcon: Icon = (props) => (
+  <svg {...props} viewBox="0 0 24 24" fill="none">
+    <path
+      d="M3.25 1.5h4v6.5h7v-6.5h4V20h-4v-7h-7v7h-4V1.5Z"
+      fill="none"
+      stroke="#8A5A00"
+      strokeWidth="0.9"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M4.5 3h4v6.5h7V3h4v18h-4v-7h-7v7h-4V3Z"
+      fill="#F2A900"
+      stroke="#F2A900"
+      strokeWidth="0.5"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
 export const OpenCodeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 32 40" fill="none" xmlns="http://www.w3.org/2000/svg">
     <g clipPath="url(#opencode__clip0_1311_94969)">

@@ -15,6 +15,7 @@ import type * as AcpSchema from "effect-acp/schema";
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
+const hermesProfile = process.env.T3_ACP_HERMES === "1";
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
@@ -67,8 +68,12 @@ const permissionRequestCount = Math.max(
 );
 const sessionId = "mock-session-1";
 
-let currentModeId = antigravityProfile ? "default" : "ask";
-let currentModelId = antigravityProfile ? "gemini-test-low" : "default";
+let currentModeId = antigravityProfile || hermesProfile ? "default" : "ask";
+let currentModelId = antigravityProfile
+  ? "gemini-test-low"
+  : hermesProfile
+    ? "openrouter:mock-alpha"
+    : "default";
 let parameterizedModelPicker = false;
 let currentReasoning = "medium";
 let currentContext = "272k";
@@ -298,29 +303,42 @@ const antigravityModels = [
   { modelId: "gemini-test-high", name: "Gemini Test High" },
 ] satisfies ReadonlyArray<AcpSchema.ModelInfo>;
 
+// Mirrors the real Hermes ACP: provider-qualified model ids, Hermes' fixed
+// mode set, and `session/set_mode` as the only working mode switch.
+const hermesModels = [
+  { modelId: "openrouter:mock-alpha", name: "Mock Alpha" },
+  { modelId: "xai-oauth:mock-beta", name: "Mock Beta" },
+] satisfies ReadonlyArray<AcpSchema.ModelInfo>;
+
 const availableModes: ReadonlyArray<AcpSchema.SessionMode> = antigravityProfile
   ? [
       { id: "default", name: "Default" },
       { id: "auto_edit", name: "Auto edit" },
       { id: "yolo", name: "YOLO" },
     ]
-  : [
-      {
-        id: "ask",
-        name: "Ask",
-        description: "Request permission before making any changes",
-      },
-      {
-        id: "architect",
-        name: "Architect",
-        description: "Design and plan software systems without implementation",
-      },
-      {
-        id: "code",
-        name: "Code",
-        description: "Write and modify code with full tool access",
-      },
-    ];
+  : hermesProfile
+    ? [
+        { id: "default", name: "Default" },
+        { id: "accept_edits", name: "Accept edits" },
+        { id: "dont_ask", name: "Don't ask" },
+      ]
+    : [
+        {
+          id: "ask",
+          name: "Ask",
+          description: "Request permission before making any changes",
+        },
+        {
+          id: "architect",
+          name: "Architect",
+          description: "Design and plan software systems without implementation",
+        },
+        {
+          id: "code",
+          name: "Code",
+          description: "Write and modify code with full tool access",
+        },
+      ];
 
 function modeState(): AcpSchema.SessionModeState {
   return {
@@ -352,6 +370,12 @@ const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
 function modelState(): AcpSchema.SessionModelState {
   if (antigravityProfile) {
     return { currentModelId, availableModels: antigravityModels };
+  }
+  if (hermesProfile) {
+    const modelId = hermesModels.some((model) => model.modelId === currentModelId)
+      ? currentModelId
+      : "openrouter:mock-alpha";
+    return { currentModelId: modelId, availableModels: hermesModels };
   }
   const modelId = grokAcpModels.some((model) => model.modelId === currentModelId)
     ? currentModelId
@@ -404,6 +428,23 @@ const program = Effect.gen(function* () {
           authMethods: [{ id: "oauth-personal", name: "Sign in with Google" }],
         };
       }
+      if (hermesProfile) {
+        // Mirrors the real agent: a provider method appears only when Hermes
+        // resolves credentials; `hermes-setup` is always present and is a
+        // terminal flow T3 can never call through `authenticate`.
+        const authMethods: Array<AcpSchema.AuthMethod> = [
+          { type: "terminal", id: "hermes-setup", name: "Run hermes setup" },
+        ];
+        if (process.env.T3_ACP_HERMES_UNCONFIGURED !== "1") {
+          authMethods.unshift({ id: "openrouter", name: "OpenRouter" });
+        }
+        return {
+          protocolVersion: 1,
+          agentInfo: { name: "hermes", version: "0.21.1-mock" },
+          agentCapabilities: { sessionCapabilities: { resume: {} } },
+          authMethods,
+        };
+      }
       return {
         protocolVersion: 1,
         agentCapabilities: { loadSession: true, sessionCapabilities: { resume: {} } },
@@ -417,15 +458,23 @@ const program = Effect.gen(function* () {
   // Mirrors the real agent: the API key method reads GEMINI_API_KEY from the
   // process environment and rejects when it is missing.
   yield* agent.handleAuthenticate((request) =>
-    !antigravityProfile || request.methodId === "oauth-personal"
-      ? Effect.succeed({})
-      : request.methodId === "gemini-api-key" && process.env.GEMINI_API_KEY
-        ? Effect.succeed({})
-        : Effect.fail(
+    hermesProfile
+      ? request.methodId === "hermes-setup"
+        ? Effect.fail(
             AcpError.AcpRequestError.invalidParams(
-              `Mock Antigravity rejected auth method ${request.methodId}.`,
+              "hermes-setup is a terminal flow; it cannot be completed over ACP.",
             ),
-          ),
+          )
+        : Effect.succeed({})
+      : !antigravityProfile || request.methodId === "oauth-personal"
+        ? Effect.succeed({})
+        : request.methodId === "gemini-api-key" && process.env.GEMINI_API_KEY
+          ? Effect.succeed({})
+          : Effect.fail(
+              AcpError.AcpRequestError.invalidParams(
+                `Mock Antigravity rejected auth method ${request.methodId}.`,
+              ),
+            ),
   );
   if (antigravityProfile) {
     yield* agent.handleLogout(() => Effect.succeed({}));
@@ -1292,7 +1341,9 @@ const program = Effect.gen(function* () {
       });
     }
 
-    if (method !== "session/mode/set") {
+    // Hermes uses the stable ACP name; the older agents the mock emulates
+    // answer `session/mode/set`. Both carry {sessionId, modeId}.
+    if (method !== "session/mode/set" && method !== "session/set_mode") {
       return Effect.fail(AcpError.AcpRequestError.methodNotFound(method));
     }
 

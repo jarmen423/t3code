@@ -92,7 +92,15 @@ export interface AcpSessionRuntimeOptions {
     readonly name: string;
     readonly version: string;
   };
-  readonly authMethodId: string;
+  /**
+   * ACP `authenticate` method id, or a resolver that picks one from the agent's
+   * advertised `authMethods` after `initialize`. Returning `undefined` (or
+   * omitting the option) skips `authenticate` — correct for agents whose only
+   * advertised method is an interactive terminal setup the client cannot run.
+   */
+  readonly authMethodId?:
+    | string
+    | ((initialize: EffectAcpSchema.InitializeResponse) => string | undefined);
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   /** Extra workspace roots the agent may read and write besides `cwd`. */
   readonly additionalDirectories?: ReadonlyArray<string>;
@@ -699,15 +707,21 @@ export const make = (
     const startOnce = Effect.gen(function* () {
       const initializeResult = yield* sendInitialize;
 
-      const authenticatePayload = {
-        methodId: options.authMethodId,
-      } satisfies EffectAcpSchema.AuthenticateRequest;
+      const authMethodId =
+        typeof options.authMethodId === "function"
+          ? options.authMethodId(initializeResult)
+          : options.authMethodId;
+      if (authMethodId !== undefined) {
+        const authenticatePayload = {
+          methodId: authMethodId,
+        } satisfies EffectAcpSchema.AuthenticateRequest;
 
-      yield* runLoggedRequest(
-        "authenticate",
-        authenticatePayload,
-        acp.agent.authenticate(authenticatePayload),
-      );
+        yield* runLoggedRequest(
+          "authenticate",
+          authenticatePayload,
+          acp.agent.authenticate(authenticatePayload),
+        );
+      }
 
       let sessionId: string;
       let sessionSetupResult:
