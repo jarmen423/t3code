@@ -112,6 +112,7 @@ import { useShortcutModifierState } from "../shortcutModifierState";
 import { ensureLocalApi, readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { useImportAgentThreads } from "../hooks/useImportAgentThreads";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
 
 import { useThreadActions } from "../hooks/useThreadActions";
@@ -1188,6 +1189,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  const { importForProject } = useImportAgentThreads();
   const updateSettings = useUpdateClientSettings();
   const sidebarThreadPreviewCount = useClientSettings<SidebarThreadPreviewCount>(
     (settings) => settings.sidebarThreadPreviewCount,
@@ -1751,6 +1753,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             params: { projectKey: project.projectKey },
           });
         });
+        actionHandlers.set("import-agent-threads", () =>
+          importForProject({
+            environmentId: project.environmentId,
+            projectId: project.id,
+          }),
+        );
 
         const clicked = await api.contextMenu.show(
           [
@@ -1758,6 +1766,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             buildTargetedItem("grouping", "Group into..."),
             buildTargetedItem("copy-path", "Copy Path"),
             { id: "project-settings", label: "Project settings", icon: "settings" },
+            {
+              id: "import-agent-threads",
+              label: "Import Claude Code and Codex threads",
+              icon: "folder",
+            },
             buildTargetedItem("delete", "Remove", {
               destructive: true,
             }),
@@ -1778,6 +1791,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [
       copyPathToClipboard,
       handleRemoveProject,
+      importForProject,
       isMobile,
       openProjectGroupingDialog,
       openProjectRenameDialog,
@@ -2249,6 +2263,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
           { id: "project-settings", label: "Project settings" },
+          { id: "import-agent-threads", label: "Import Claude Code and Codex threads" },
           { id: "delete", label: "Delete", destructive: true, icon: "trash" },
         ],
         position,
@@ -2259,6 +2274,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         void router.navigate({
           to: "/projects/$projectKey",
           params: { projectKey: project.projectKey },
+        });
+        return;
+      }
+
+      if (clicked === "import-agent-threads") {
+        await importForProject({
+          environmentId: thread.environmentId,
+          projectId: thread.projectId,
         });
         return;
       }
@@ -2345,6 +2368,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       copyThreadIdToClipboard,
       deleteThread,
       handleNewThread,
+      importForProject,
       isMobile,
       markThreadUnread,
       memberProjectByScopedKey,

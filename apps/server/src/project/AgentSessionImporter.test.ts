@@ -432,7 +432,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
         expect(yield* importOnce()).toEqual({ importedCount: 0, skippedCount: 1 });
         expect(yield* importOnce()).toEqual({ importedCount: 1, skippedCount: 0 });
         const historyAttemptsAfterCompletion = historyAttemptCount;
-        expect(yield* importOnce()).toEqual({ importedCount: 1, skippedCount: 0 });
+        expect(yield* importOnce()).toEqual({ importedCount: 0, skippedCount: 0 });
         expect(historyAttemptCount).toBe(historyAttemptsAfterCompletion);
         expect(historyAttemptCount).toBe(2);
         expect(bindings).toHaveLength(1);
@@ -483,7 +483,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           }),
         });
 
-        expect(result).toEqual({ importedCount: 1, skippedCount: 0 });
+        expect(result).toEqual({ importedCount: 0, skippedCount: 0 });
       }),
     );
 
@@ -810,7 +810,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
         });
 
         const first = yield* runAttempt(new Set());
-        expect(first.result).toEqual({ importedCount: 99, skippedCount: 2 });
+        expect(first.result).toEqual({ importedCount: 98, skippedCount: 2 });
         expect(failHistory).toBe(false);
         expect(first.fullReads).toEqual(transcripts.slice(0, 100).map((entry) => entry.filePath));
         expect(first.openCounts.get(remaining.filePath)).toBe(1);
@@ -831,7 +831,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
 
         const completedPaths = new Set(completedSources.map((entry) => entry.source.filePath));
         const second = yield* runAttempt(completedPaths);
-        expect(second.result).toEqual({ importedCount: 101, skippedCount: 0 });
+        expect(second.result).toEqual({ importedCount: 2, skippedCount: 0 });
         expect(second.fullReads).toEqual([failed.filePath, remaining.filePath]);
         for (const transcript of transcripts) {
           expect(second.openCounts.get(transcript.filePath)).toBe(

@@ -64,6 +64,10 @@ projects it found and warns when projects or conversations may be missing.
 Imported projects include Codex and Claude conversations active within the last
 30 days. You can continue those conversations in T3 Code.
 
+To import again later, open the command palette and run **Import Claude Code and
+Codex threads**, or choose that item from a thread's action menu. Import uses the
+project you are in. It adds only conversations that are not already in T3 Code.
+
 Conversation import is best effort. T3 Code keeps the first user prompt and the
 newest remaining visible user and assistant messages, with 200 messages total.
 It omits tool activity and attachments. For Codex, it omits generated setup

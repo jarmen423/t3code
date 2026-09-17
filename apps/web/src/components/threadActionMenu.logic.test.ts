@@ -33,7 +33,15 @@ describe("buildThreadActionMenuItems", () => {
         ...baseState,
         supports: { settlement: false, snooze: false, pinning: false, titleRegeneration: false },
       }),
-    ).toEqual(["rename", "mark-unread", "copy", "project-settings", "archive", "delete"]);
+    ).toEqual([
+      "rename",
+      "mark-unread",
+      "copy",
+      "project-settings",
+      "import-agent-threads",
+      "archive",
+      "delete",
+    ]);
   });
 
   it("groups project settings with utility actions before archive", () => {
@@ -44,7 +52,8 @@ describe("buildThreadActionMenuItems", () => {
       label: "Project settings",
       icon: "settings",
     });
-    expect(items[copyIndex + 2]?.id).toBe("archive");
+    expect(items[copyIndex + 2]?.id).toBe("import-agent-threads");
+    expect(items[copyIndex + 3]?.id).toBe("archive");
   });
 
   it("includes branch items only for threads with a branch", () => {
