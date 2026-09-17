@@ -133,6 +133,8 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
     completedSources.map((entry) => entry.source),
   );
   const importedThreadIds = new Set<ThreadId>();
+  // Newly materialized this call. Sessions already in T3 do not count, so a
+  // later import can honestly report "no new threads".
   let importedCount = 0;
   let skippedCount = 0;
 
@@ -148,7 +150,6 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
         );
         if (outcome._tag === "AlreadyImported") {
           importedThreadIds.add(threadId);
-          importedCount += 1;
         } else if (importedThreadIds.has(threadId)) {
           const recorded = yield* directory
             .recordImportedTranscript({ threadId, source: outcome.source })
@@ -200,7 +201,7 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
           Option.isSome(existingBinding)
         ) {
           yield* directory.recordImportedTranscript({ threadId, source: outcome.source });
-          return true;
+          return "existing" as const;
         }
 
         if (
@@ -273,20 +274,22 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
 
         yield* directory.recordImportedTranscript({ threadId, source: outcome.source });
 
-        return true;
+        return "created" as const;
       }).pipe(
         Effect.catch((cause) =>
           Effect.logWarning("Could not import an agent session", {
             provider: thread.source,
             sessionId: thread.providerSessionId,
             cause,
-          }).pipe(Effect.as(false)),
+          }).pipe(Effect.as("skipped" as const)),
         ),
       );
 
-      if (imported) {
+      if (imported === "created") {
         importedThreadIds.add(threadId);
         importedCount += 1;
+      } else if (imported === "existing") {
+        importedThreadIds.add(threadId);
       } else {
         skippedCount += 1;
       }
