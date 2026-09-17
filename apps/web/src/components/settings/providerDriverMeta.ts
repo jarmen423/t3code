@@ -3,8 +3,10 @@ import {
   ClaudeSettings,
   CodexSettings,
   CursorSettings,
+  DevinSettings,
   GrokSettings,
   HermesSettings,
+  MuseSettings,
   OpenCodeSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
@@ -13,9 +15,11 @@ import {
   AntigravityIcon,
   ClaudeAI,
   CursorIcon,
+  DevinIcon,
   GrokIcon,
   HermesIcon,
   type Icon,
+  MuseIcon,
   OpenAI,
   OpenCodeIcon,
 } from "../Icons";
@@ -78,6 +82,20 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
     icon: HermesIcon,
     badgeLabel: "Experimental",
     settingsSchema: HermesSettings,
+  },
+  {
+    value: ProviderDriverKind.make("devin"),
+    label: "Devin",
+    icon: DevinIcon,
+    badgeLabel: "Experimental",
+    settingsSchema: DevinSettings,
+  },
+  {
+    value: ProviderDriverKind.make("muse"),
+    label: "Muse Code",
+    icon: MuseIcon,
+    badgeLabel: "Experimental",
+    settingsSchema: MuseSettings,
   },
   {
     value: ProviderDriverKind.make("opencode"),

@@ -264,6 +264,8 @@ const PersistedOptionalProviderSettings = Schema.Struct({
       cursor: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
       grok: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
       hermes: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
+      devin: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
+      muse: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
       opencode: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
     }),
   ),
@@ -293,6 +295,8 @@ function restoreUsedProviders(
       (instance.driver === "cursor" ||
         instance.driver === "grok" ||
         instance.driver === "hermes" ||
+        instance.driver === "devin" ||
+        instance.driver === "muse" ||
         instance.driver === "opencode") &&
       usedProviderInstances.has(instanceId)
         ? { ...instance, enabled: true }
@@ -315,6 +319,14 @@ function restoreUsedProviders(
       hermes: {
         ...settings.providers.hermes,
         enabled: persisted.providers?.hermes?.enabled ?? usedProviders.has("hermes"),
+      },
+      devin: {
+        ...settings.providers.devin,
+        enabled: persisted.providers?.devin?.enabled ?? usedProviders.has("devin"),
+      },
+      muse: {
+        ...settings.providers.muse,
+        enabled: persisted.providers?.muse?.enabled ?? usedProviders.has("muse"),
       },
       opencode: {
         ...settings.providers.opencode,
@@ -374,6 +386,8 @@ const PERSISTED_SERVER_SETTINGS_DEFAULTS = {
     cursor: { ...DEFAULT_SERVER_SETTINGS.providers.cursor, enabled: undefined },
     grok: { ...DEFAULT_SERVER_SETTINGS.providers.grok, enabled: undefined },
     hermes: { ...DEFAULT_SERVER_SETTINGS.providers.hermes, enabled: undefined },
+    devin: { ...DEFAULT_SERVER_SETTINGS.providers.devin, enabled: undefined },
+    muse: { ...DEFAULT_SERVER_SETTINGS.providers.muse, enabled: undefined },
     opencode: { ...DEFAULT_SERVER_SETTINGS.providers.opencode, enabled: undefined },
   },
 };
@@ -599,13 +613,13 @@ const make = Effect.gen(function* () {
         provider_name AS "providerName",
         provider_instance_id AS "providerInstanceId"
       FROM projection_thread_sessions
-      WHERE provider_name IN ('cursor', 'grok', 'hermes', 'opencode')
+      WHERE provider_name IN ('cursor', 'grok', 'hermes', 'devin', 'muse', 'opencode')
       UNION
       SELECT DISTINCT
         provider_name AS "providerName",
         provider_instance_id AS "providerInstanceId"
       FROM provider_session_runtime
-      WHERE provider_name IN ('cursor', 'grok', 'hermes', 'opencode')
+      WHERE provider_name IN ('cursor', 'grok', 'hermes', 'devin', 'muse', 'opencode')
     `.pipe(
       Effect.mapError(
         (cause) =>
