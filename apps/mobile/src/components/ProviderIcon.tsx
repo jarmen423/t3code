@@ -55,22 +55,11 @@ export function ProviderIcon(props: ProviderIconProps) {
 
   if (props.provider === "hermes") {
     return (
-      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-        <Path
-          d="M3.25 1.5h4v6.5h7v-6.5h4V20h-4v-7h-7v7h-4V1.5Z"
-          fill="none"
-          stroke="#8A5A00"
-          strokeWidth={0.9}
-          strokeLinejoin="round"
-        />
-        <Path
-          d="M4.5 3h4v6.5h7V3h4v18h-4v-7h-7v7h-4V3Z"
-          fill="#F2A900"
-          stroke="#F2A900"
-          strokeWidth={0.5}
-          strokeLinejoin="round"
-        />
-      </Svg>
+      <Image
+        source={require("../../assets/hermes.png")}
+        style={{ width: size, height: size }}
+        contentFit="contain"
+      />
     );
   }
 
