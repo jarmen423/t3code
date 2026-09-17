@@ -51,6 +51,32 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$GITHUB_WORKSPACE/release-out"
+          # pnpm pack cannot resolve workspace:* ranges (t3's workspace deps
+          # are devDependencies, bundled into dist and never installed from the
+          # registry). Pin versioned ones and drop unversioned ones before
+          # packing — same rewrite cli.ts publish performs before npm publish.
+          node - <<'EOF'
+          const fs = require('fs');
+          const path = require('path');
+          const root = process.env.GITHUB_WORKSPACE;
+          const pkgPath = path.join(root, 'apps/server/package.json');
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+          const candidates = ['packages', 'apps'].flatMap(d =>
+            fs.readdirSync(path.join(root, d)).map(sub => path.join(root, d, sub, 'package.json')));
+          for (const section of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+            for (const [name, range] of Object.entries(pkg[section] || {})) {
+              if (typeof range === 'string' && range.startsWith('workspace:')) {
+                const depPath = candidates.find(p => {
+                  try { return JSON.parse(fs.readFileSync(p, 'utf8')).name === name; } catch { return false; }
+                });
+                const ver = depPath && JSON.parse(fs.readFileSync(depPath, 'utf8')).version;
+                if (ver) pkg[section][name] = ver;
+                else delete pkg[section][name];
+              }
+            }
+          }
+          fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+          EOF
           cd apps/server
           vp pm pack --pack-destination "$GITHUB_WORKSPACE/release-out"
 
