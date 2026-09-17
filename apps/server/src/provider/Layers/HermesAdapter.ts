@@ -137,6 +137,8 @@ interface HermesSessionContext {
   currentModelId: string | undefined;
   stopped: boolean;
   closed: boolean;
+  /** Set when the Hermes process died on its own; skips the cancel handshake. */
+  disconnected: boolean;
 }
 
 type HermesAdapterShape = ProviderAdapterShape<ProviderAdapterError>;
@@ -210,10 +212,15 @@ function parseHermesResumeCursor(raw: unknown): { sessionId: string } | undefine
     : undefined;
 }
 
-/** Hermes answers provider errors when no credentials resolve, not a typed auth code. */
+/**
+ * The spec auth-required code is -32000. Hermes otherwise reports missing
+ * credentials as plain provider errors, so the message regex stays. -32002
+ * (resource not found) is deliberately excluded: `session/resume` answers it
+ * for a stale session id, which must not flip the provider into setup-required.
+ */
 function isHermesAuthRequiredError(error: unknown): boolean {
   if (isAcpRequestError(error)) {
-    return error.code === -32002 || /auth|credential|setup|configured/i.test(error.message);
+    return error.code === -32000 || /auth|credential|setup|configured/i.test(error.message);
   }
   if (isAcpTransportError(error)) {
     return /auth|credential|setup|configured/i.test(error.detail ?? "");
@@ -232,6 +239,7 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (
   const path = yield* Path.Path;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverConfig = yield* ServerConfig;
+  const ownerScope = yield* Effect.scope;
   const makeNativeLoggers = yield* makeAcpNativeLoggerFactory();
   const sessions = new Map<ThreadId, HermesSessionContext>();
   const locks = yield* SynchronizedRef.make(new Map<ThreadId, Semaphore.Semaphore>());
@@ -290,7 +298,8 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (
           context.stopEpoch += 1;
           yield* Effect.gen(function* () {
             yield* cancelRequests(context);
-            if (context.promptFiber) {
+            // A dead process cannot answer session/cancel — skip it.
+            if (context.promptFiber && !context.disconnected) {
               yield* Effect.ignore(context.acp.cancel);
             }
           }).pipe(Effect.ensuring(Scope.close(context.scope, Exit.void)));
@@ -301,7 +310,10 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (
             ...(yield* stamp),
             provider: PROVIDER,
             threadId: context.threadId,
-            payload: { exitKind: "graceful" },
+            payload: {
+              exitKind: context.disconnected ? "error" : "graceful",
+              ...(context.disconnected ? { reason: "Hermes process stopped." } : {}),
+            },
           });
         }),
       )
@@ -329,11 +341,7 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (
       context.session.runtimeMode === "full-access" ||
       (approvalKey !== undefined && context.sessionApprovedOperations.has(approvalKey))
     ) {
-      const autoApprovedOptionId =
-        context.session.runtimeMode === "full-access"
-          ? selectAutoApprovedPermissionOption(request)
-          : (selectHermesPermissionOptionId(request, "acceptForSession") ??
-            selectHermesPermissionOptionId(request, "accept"));
+      const autoApprovedOptionId = selectAutoApprovedPermissionOption(request);
       if (autoApprovedOptionId !== undefined) {
         return {
           outcome: { outcome: "selected", optionId: autoApprovedOptionId },
@@ -514,13 +522,21 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (
           yield* options.onSessionStarted?.(started) ?? Effect.void;
 
           const createdAt = yield* nowIso;
+          // The picker's slug (e.g. "default") stays on session.model so the
+          // UI keeps showing the configured-model choice; the resolved native
+          // id lives on context.currentModelId.
+          const selectedModel = modelSelection?.model.trim();
           const session: ProviderSession = {
             provider: PROVIDER,
             providerInstanceId: boundInstanceId,
             status: "ready",
             runtimeMode: input.runtimeMode,
             cwd,
-            ...(currentModelId ? { model: currentModelId } : {}),
+            ...(selectedModel
+              ? { model: selectedModel }
+              : currentModelId
+                ? { model: currentModelId }
+                : {}),
             threadId: input.threadId,
             resumeCursor: {
               schemaVersion: HERMES_RESUME_VERSION,
@@ -547,6 +563,7 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (
             currentModelId,
             stopped: false,
             closed: false,
+            disconnected: false,
           };
 
           yield* Stream.runDrain(
@@ -560,11 +577,19 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (
                   yield* options.onAvailableCommands?.(event.availableCommands) ?? Effect.void;
                   return;
                 }
-                if (
-                  event._tag === "ModeChanged" ||
-                  event._tag === "ConfigOptionsUpdated" ||
-                  event._tag === "ConnectionTerminated"
-                ) {
+                if (event._tag === "ModeChanged" || event._tag === "ConfigOptionsUpdated") {
+                  return;
+                }
+                if (event._tag === "ConnectionTerminated") {
+                  // The process is gone: no cancel can reach it and no more
+                  // events arrive. Fork the stop into the adapter's owner
+                  // scope so the scope close and session.exited emission
+                  // survive this consumer fiber's own scope teardown.
+                  if (context !== undefined && !context.closed) {
+                    context.stopped = true;
+                    context.disconnected = true;
+                    yield* stopContext(context).pipe(Effect.forkIn(ownerScope));
+                  }
                   return;
                 }
                 const turnId = context?.activeTurnId;
@@ -821,21 +846,6 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (
             };
             intent = turn;
             context.activeTurnId = turnId;
-            if (!steering) {
-              yield* emit({
-                type: "turn.started",
-                ...(yield* stamp),
-                provider: PROVIDER,
-                threadId: input.threadId,
-                turnId,
-                payload:
-                  turnModelId !== undefined
-                    ? { model: turnModelId }
-                    : context.currentModelId !== undefined
-                      ? { model: context.currentModelId }
-                      : {},
-              });
-            }
             // Never let a prompt reach Hermes while a turn is active: a busy
             // `session/prompt` answers end_turn immediately but executes later
             // through Hermes' own queue, which stop cannot reach. Cancel and
@@ -852,17 +862,34 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (
               mapError: (cause) => cause,
             });
             context.currentModelId = currentModelId;
+            if (!steering) {
+              yield* emit({
+                type: "turn.started",
+                ...(yield* stamp),
+                provider: PROVIDER,
+                threadId: input.threadId,
+                turnId,
+                // The model actually running: a product slug like "default"
+                // resolves to the configured native id by this point.
+                payload: currentModelId !== undefined ? { model: currentModelId } : {},
+              });
+            }
             yield* applyHermesAcpMode({
               runtime: context.acp,
               sessionId: context.acpSessionId,
               modeId: hermesPermissionMode(context.session.runtimeMode),
               mapError: (cause) => cause,
             });
+            const selectedModel = input.modelSelection?.model.trim();
             context.session = {
               ...context.session,
               status: "running",
               activeTurnId: turnId,
-              ...(currentModelId ? { model: currentModelId } : {}),
+              ...(selectedModel
+                ? { model: selectedModel }
+                : currentModelId
+                  ? { model: currentModelId }
+                  : {}),
               updatedAt: yield* nowIso,
             };
             const dispatched = yield* Deferred.make<void>();
@@ -959,9 +986,11 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (
     },
   );
 
-  const interruptTurn: HermesAdapterShape["interruptTurn"] = (threadId) =>
+  const interruptTurn: HermesAdapterShape["interruptTurn"] = (threadId, turnId) =>
     Effect.gen(function* () {
       const context = yield* requireSession(threadId);
+      // A stale interrupt must not cancel the active turn behind its back.
+      if (turnId !== undefined && context.activeTurnId !== turnId) return;
       context.stopEpoch += 1;
       yield* context.promptLock
         .withPermit(

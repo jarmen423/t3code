@@ -1,4 +1,5 @@
 import {
+  type CustomModelSetting,
   type HermesSettings,
   ProviderDriverKind,
   type ProviderSetupError,
@@ -28,6 +29,7 @@ import {
 import {
   buildServerProvider,
   isCommandMissingCause,
+  providerModelsFromSettings,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 
@@ -65,6 +67,7 @@ function isMissingInstallation(error: EffectAcpErrors.AcpError | ProviderSetupEr
  */
 export function buildHermesModelsFromSession(
   modelState: EffectAcpSchema.SessionModelState | null | undefined,
+  customModels: ReadonlyArray<CustomModelSetting> | undefined,
 ): ReadonlyArray<ServerProviderModel> {
   const currentModelId = modelState?.currentModelId?.trim() ?? "";
   const seen = new Set<string>();
@@ -84,15 +87,19 @@ export function buildHermesModelsFromSession(
       },
     ];
   });
-  return [
-    {
-      slug: HERMES_DEFAULT_MODEL_SLUG,
-      name: "Hermes configured model",
-      isCustom: false,
-      capabilities: EMPTY_MODEL_CAPABILITIES,
-    },
-    ...native,
-  ];
+  return providerModelsFromSettings(
+    [
+      {
+        slug: HERMES_DEFAULT_MODEL_SLUG,
+        name: "Hermes configured model",
+        isCustom: false,
+        capabilities: EMPTY_MODEL_CAPABILITIES,
+      },
+      ...native,
+    ],
+    customModels ?? [],
+    EMPTY_MODEL_CAPABILITIES,
+  );
 }
 
 function hermesAuthFromInitialize(
@@ -151,14 +158,7 @@ export const makeHermesProvider = Effect.fn("makeHermesProvider")(function* (
       presentation: HERMES_PRESENTATION,
       enabled: settings.enabled,
       checkedAt,
-      models: [
-        {
-          slug: HERMES_DEFAULT_MODEL_SLUG,
-          name: "Hermes configured model",
-          isCustom: false,
-          capabilities: EMPTY_MODEL_CAPABILITIES,
-        },
-      ],
+      models: buildHermesModelsFromSession(undefined, settings.customModels),
       probe: {
         installed: false,
         version: null,
@@ -169,7 +169,7 @@ export const makeHermesProvider = Effect.fn("makeHermesProvider")(function* (
           : "Hermes is disabled in T3 Code settings.",
       },
     }),
-    // T3 cannot drive `hermes --setup` (interactive terminal) or install the
+    // T3 cannot drive `hermes setup` (interactive terminal) or install the
     // binary, so Settings only reports status and points at the CLI.
     setup: { canAuthenticate: false, canInstall: false },
     supportsTextGeneration: false,
@@ -219,7 +219,11 @@ export const makeHermesProvider = Effect.fn("makeHermesProvider")(function* (
         ...state,
         draft: {
           ...draft,
-          installed: !missingInstallation,
+          installed: missingInstallation
+            ? false
+            : initialized !== undefined
+              ? true
+              : draft.installed,
           version: initialized?.agentInfo?.version || draft.version,
           status: missingInstallation
             ? "error"
@@ -278,7 +282,10 @@ export const makeHermesProvider = Effect.fn("makeHermesProvider")(function* (
           version: started.initializeResult.agentInfo?.version || draft.version,
           auth: hermesAuthFromInitialize(started.initializeResult),
           checkedAt: updatedAt,
-          models: buildHermesModelsFromSession(started.sessionSetupResult.models),
+          models: buildHermesModelsFromSession(
+            started.sessionSetupResult.models,
+            settings.customModels,
+          ),
           supportsTextGeneration,
         },
       } satisfies HermesProviderState;
@@ -309,14 +316,7 @@ export const makeHermesProvider = Effect.fn("makeHermesProvider")(function* (
             status: settings.enabled ? "warning" : "disabled",
             message: SETUP_MESSAGE,
             checkedAt: updatedAt,
-            models: [
-              {
-                slug: HERMES_DEFAULT_MODEL_SLUG,
-                name: "Hermes configured model",
-                isCustom: false,
-                capabilities: EMPTY_MODEL_CAPABILITIES,
-              },
-            ],
+            models: buildHermesModelsFromSession(undefined, settings.customModels),
             slashCommands: [],
             supportsTextGeneration: false,
           },

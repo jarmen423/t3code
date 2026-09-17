@@ -17,7 +17,7 @@ import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 export const HERMES_DEFAULT_MODEL_SLUG = "default";
 
 /**
- * Hermes' terminal auth method: it asks the client to open `hermes --setup` in
+ * Hermes' terminal auth method: it asks the client to open `hermes setup` in
  * a TUI. T3 cannot drive a terminal, so it is surfaced as a setup requirement,
  * never sent to `authenticate`.
  */

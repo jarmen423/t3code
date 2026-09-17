@@ -5,13 +5,16 @@ import { buildHermesModelsFromSession } from "./HermesProvider.ts";
 
 describe("buildHermesModelsFromSession", () => {
   it("puts the product default slug first and keeps native models", () => {
-    const models = buildHermesModelsFromSession({
-      currentModelId: "openrouter:anthropic/claude",
-      availableModels: [
-        { modelId: "openrouter:anthropic/claude", name: "Claude" },
-        { modelId: "xai-oauth:grok-4", name: "Grok 4" },
-      ],
-    });
+    const models = buildHermesModelsFromSession(
+      {
+        currentModelId: "openrouter:anthropic/claude",
+        availableModels: [
+          { modelId: "openrouter:anthropic/claude", name: "Claude" },
+          { modelId: "xai-oauth:grok-4", name: "Grok 4" },
+        ],
+      },
+      [],
+    );
     expect(models.map((model) => model.slug)).toEqual([
       HERMES_DEFAULT_MODEL_SLUG,
       "openrouter:anthropic/claude",
@@ -23,15 +26,18 @@ describe("buildHermesModelsFromSession", () => {
   });
 
   it("dedupes native ids, drops blanks, and tolerates missing state", () => {
-    const models = buildHermesModelsFromSession({
-      currentModelId: "openrouter:a",
-      availableModels: [
-        { modelId: "openrouter:a", name: "A" },
-        { modelId: "openrouter:a", name: "A again" },
-        { modelId: "  ", name: "blank" },
-        { modelId: "plain", name: "" },
-      ],
-    });
+    const models = buildHermesModelsFromSession(
+      {
+        currentModelId: "openrouter:a",
+        availableModels: [
+          { modelId: "openrouter:a", name: "A" },
+          { modelId: "openrouter:a", name: "A again" },
+          { modelId: "  ", name: "blank" },
+          { modelId: "plain", name: "" },
+        ],
+      },
+      [],
+    );
     expect(models.map((model) => model.slug)).toEqual([
       HERMES_DEFAULT_MODEL_SLUG,
       "openrouter:a",
@@ -41,8 +47,38 @@ describe("buildHermesModelsFromSession", () => {
     expect(models[2]?.subProvider).toBeUndefined();
     expect(models[2]?.name).toBe("plain");
 
-    expect(buildHermesModelsFromSession(undefined).map((model) => model.slug)).toEqual([
+    expect(buildHermesModelsFromSession(undefined, undefined).map((model) => model.slug)).toEqual([
       HERMES_DEFAULT_MODEL_SLUG,
     ]);
+  });
+
+  it("appends custom models after native ones and dedupes them against built-in slugs", () => {
+    const models = buildHermesModelsFromSession(
+      {
+        currentModelId: "openrouter:a",
+        availableModels: [{ modelId: "openrouter:a", name: "A" }],
+      },
+      [
+        { slug: "openrouter:a", name: "Collides with native" },
+        "ollama:local",
+        { slug: "xai-oauth:custom-grok", name: "Custom Grok" },
+        HERMES_DEFAULT_MODEL_SLUG,
+      ],
+    );
+    expect(models.map((model) => model.slug)).toEqual([
+      HERMES_DEFAULT_MODEL_SLUG,
+      "openrouter:a",
+      "ollama:local",
+      "xai-oauth:custom-grok",
+    ]);
+    // The colliding custom entry and the product-slug duplicate are dropped;
+    // the native row keeps its built-in identity.
+    expect(models[1]?.isCustom).toBe(false);
+    expect(models[1]?.name).toBe("A");
+    expect(models[2]?.isCustom).toBe(true);
+    // A bare-slug custom entry falls back to the slug for its display name.
+    expect(models[2]?.name).toBe("ollama:local");
+    expect(models[3]?.isCustom).toBe(true);
+    expect(models[3]?.name).toBe("Custom Grok");
   });
 });

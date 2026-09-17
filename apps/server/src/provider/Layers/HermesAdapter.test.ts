@@ -5,6 +5,7 @@ import {
   HermesSettings,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -63,6 +64,7 @@ const makeHarness = Effect.fn("makeHermesAdapterHarness")(function* (options?: {
   readonly enabled?: boolean;
   readonly holdCancel?: boolean;
   readonly authMethods?: ReadonlyArray<AcpSchema.AuthMethod>;
+  readonly onAuthRequired?: Effect.Effect<void>;
 }) {
   const runtimeEvents = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
   const canonicalEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
@@ -73,7 +75,11 @@ const makeHarness = Effect.fn("makeHermesAdapterHarness")(function* (options?: {
   const calls: string[] = [];
   const requests: Array<{ method: string; params: unknown }> = [];
   const launches: Array<Parameters<NonNullable<HermesAdapterOptions["makeRuntime"]>>[0]> = [];
-  const controls = { failModel: false, closed: 0 };
+  const controls = {
+    failModel: false,
+    closed: 0,
+    startError: undefined as AcpErrors.AcpError | undefined,
+  };
   let promptIndex = 0;
   let active: NativePrompt | undefined;
   const modeState = yield* Ref.make({
@@ -125,6 +131,11 @@ const makeHarness = Effect.fn("makeHermesAdapterHarness")(function* (options?: {
     start: () =>
       Effect.gen(function* () {
         calls.push("start");
+        const startError = controls.startError;
+        if (startError !== undefined) {
+          controls.startError = undefined;
+          return yield* startError;
+        }
         yield* emitNative({
           _tag: "AvailableCommandsUpdated",
           availableCommands: [
@@ -229,6 +240,7 @@ const makeHarness = Effect.fn("makeHermesAdapterHarness")(function* (options?: {
 
   const adapter = yield* makeHermesAdapter(decodeSettings({ enabled: options?.enabled ?? true }), {
     instanceId,
+    ...(options?.onAuthRequired ? { onAuthRequired: options.onAuthRequired } : {}),
     makeRuntime: (input) =>
       Effect.gen(function* () {
         launches.push(input);
@@ -402,7 +414,7 @@ it.layer(layer)("HermesAdapter", (it) => {
     }),
   );
 
-  it.effect("keeps the native model when the product default slug is selected", () =>
+  it.effect("keeps the product slug on session.model and sends only native ids to set_model", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
       const session = yield* h.adapter.startSession({
@@ -411,8 +423,18 @@ it.layer(layer)("HermesAdapter", (it) => {
         runtimeMode: "approval-required",
         modelSelection: { instanceId, model: "default" },
       });
-      expect(session.model).toBe(nativeDefault);
+      // The picker's slug stays on session.model; it never reaches the wire.
+      expect(session.model).toBe("default");
       expect(h.calls).toEqual(["start"]);
+
+      const native = yield* h.adapter.startSession({
+        threadId: ThreadId.make("hermes-thread-native"),
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+        modelSelection: { instanceId, model: nativeAlternative },
+      });
+      expect(native.model).toBe(nativeAlternative);
+      expect(h.calls).toEqual(["start", "start", `model:${nativeAlternative}`]);
     }),
   );
 
@@ -434,6 +456,43 @@ it.layer(layer)("HermesAdapter", (it) => {
       expect(resumed.resumeCursor).toMatchObject({ sessionId: nativeSessionId });
       expect(h.launches[1]?.resumeSessionId).toBe(nativeSessionId);
       expect(h.launches[1]?.resumeMethod).toBe("resume");
+    }),
+  );
+
+  it.effect("invokes onAuthRequired when start fails with the -32000 auth code", () =>
+    Effect.gen(function* () {
+      const authRequired = yield* Ref.make(false);
+      const h = yield* makeHarness({ onAuthRequired: Ref.set(authRequired, true) });
+      h.controls.startError = AcpErrors.AcpRequestError.authRequired();
+      const started = yield* h.adapter
+        .startSession({
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "approval-required",
+        })
+        .pipe(Effect.exit);
+      expect(Exit.isFailure(started)).toBe(true);
+      expect(yield* Ref.get(authRequired)).toBe(true);
+    }),
+  );
+
+  it.effect("does not invoke onAuthRequired for a -32002 stale-resume failure", () =>
+    Effect.gen(function* () {
+      const authRequired = yield* Ref.make(false);
+      const h = yield* makeHarness({ onAuthRequired: Ref.set(authRequired, true) });
+      // session/resume answers -32002 for a stale session id; that is a dead
+      // cursor, not missing credentials.
+      h.controls.startError = AcpErrors.AcpRequestError.resourceNotFound();
+      const started = yield* h.adapter
+        .startSession({
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "auto",
+          resumeCursor: { schemaVersion: 1, sessionId: "stale-session" },
+        })
+        .pipe(Effect.exit);
+      expect(Exit.isFailure(started)).toBe(true);
+      expect(yield* Ref.get(authRequired)).toBe(false);
     }),
   );
 
@@ -528,6 +587,34 @@ it.layer(layer)("HermesAdapter", (it) => {
       const ended = yield* h.waitForEvent((event) => event.type === "turn.completed");
       expect(ended.payload.state).toBe("cancelled");
       expect(h.hasActivePrompt()).toBe(false);
+    }),
+  );
+
+  it.effect("ignores an interrupt for a stale turn id and cancels the matching turn", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      const sending = yield* h.adapter
+        .sendTurn({ threadId, input: "Keep working" })
+        .pipe(Effect.forkChild);
+      yield* h.nextPrompt;
+      const started = yield* h.waitForEvent((event) => event.type === "turn.started");
+      const activeTurnId = started.turnId;
+      expect(activeTurnId).toBeDefined();
+      // A stale turn id must not bump the stop epoch or send session/cancel.
+      yield* h.adapter.interruptTurn(threadId, TurnId.make("some-other-turn"));
+      expect(h.calls.some((call) => call.startsWith("cancel:"))).toBe(false);
+      expect(h.hasActivePrompt()).toBe(true);
+      yield* h.adapter.interruptTurn(threadId, activeTurnId);
+      yield* Fiber.join(sending);
+      const ended = yield* h.waitForEvent((event) => event.type === "turn.completed");
+      expect(ended.turnId).toBe(activeTurnId);
+      expect(ended.payload.state).toBe("cancelled");
+      expect(h.calls).toContain("cancel:1");
     }),
   );
 
@@ -763,6 +850,28 @@ it.layer(layer)("HermesAdapter", (it) => {
       expect(h.controls.closed).toBe(1);
       expect(yield* h.adapter.hasSession(threadId)).toBe(false);
       const send = yield* h.adapter.sendTurn({ threadId, input: "after stop" }).pipe(Effect.exit);
+      expect(Exit.isFailure(send)).toBe(true);
+    }),
+  );
+
+  it.effect("exits the session with an error when the Hermes process terminates", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      yield* h.emitNative({
+        _tag: "ConnectionTerminated",
+        error: new AcpErrors.AcpTransportError({ detail: "Process exited.", cause: undefined }),
+      });
+      const exited = yield* h.waitForEvent((event) => event.type === "session.exited");
+      expect(exited.payload.exitKind).toBe("error");
+      expect(exited.payload.reason).toBe("Hermes process stopped.");
+      expect(h.controls.closed).toBe(1);
+      expect(yield* h.adapter.hasSession(threadId)).toBe(false);
+      const send = yield* h.adapter.sendTurn({ threadId, input: "after exit" }).pipe(Effect.exit);
       expect(Exit.isFailure(send)).toBe(true);
     }),
   );
