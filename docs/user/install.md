@@ -137,7 +137,8 @@ their original values.
 
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [Hermes](./providers-hermes.md),
-[OpenCode](./providers-opencode.md), and [Antigravity](./providers-antigravity.md).
+[Muse Code](./providers-muse.md), [OpenCode](./providers-opencode.md), and
+[Antigravity](./providers-antigravity.md).
 
 ## Next steps
 
