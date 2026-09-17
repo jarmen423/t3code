@@ -183,10 +183,15 @@ jobs:
           if-no-files-found: error
 
   finalize:
-    name: Collect release assets
+    name: Publish release
     needs: [linux, windows, npm_tarball]
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      T3CODE_FORK_VERSION: 0.0.40-hermes.${{ github.run_number }}
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v8
@@ -210,9 +215,39 @@ jobs:
           sha256sum "${archives[@]}" > SHA256SUMS
           cat SHA256SUMS
 
+      # The desktop build emits the win manifest per-arch
+      # (latest-win-x64.yml); the updater fetches the channel's canonical
+      # name, which upstream ships as latest.yml.
+      - name: Stage release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          if [[ -f latest-win-x64.yml ]]; then
+            mv latest-win-x64.yml latest.yml
+          fi
+          ls -la
+
       - name: Upload release assets
         uses: actions/upload-artifact@v7
         with:
           name: t3-release-assets
           path: release-assets/*
           if-no-files-found: error
+
+      - name: Publish GitHub release
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          tag="v$T3CODE_FORK_VERSION"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --target "${{ github.sha }}" \
+              --title "T3 Code $T3CODE_FORK_VERSION — Hermes Agent provider" \
+              --notes "Fork build of T3 Code with the Hermes Agent ACP provider. Windows exe (unsigned), Linux AppImage, npm CLI tarball, and self-contained CLI archives for SSH-provisioned remote environments."
+          fi
+          shopt -s nullglob
+          assets=(./*.exe ./*.exe.blockmap ./*.AppImage ./*.yml ./*.tgz \
+            ./*.tar.gz ./*.zip ./SHA256SUMS ./t3-resource-monitor*)
+          gh release upload "$tag" --clobber "${assets[@]}"
