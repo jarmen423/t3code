@@ -98,7 +98,12 @@ const resolveDesktopSshCliRunner = (
       nodeEngineRange: serverPackageJson.engines.node,
     };
   }
-  return { archiveVersion: environment.appVersion };
+  return {
+    archiveVersion: environment.appVersion,
+    // Fork builds ship their CLI archives as GitHub release assets on this
+    // repository — provision remotes from here, not the upstream origin.
+    releaseBaseUrl: "https://github.com/jarmen423/t3code/releases/download",
+  };
 };
 
 const desktopSshEnvironmentLayer = Layer.unwrap(
