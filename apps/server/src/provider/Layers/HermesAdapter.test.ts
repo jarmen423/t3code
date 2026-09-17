@@ -73,6 +73,7 @@ const makeHarness = Effect.fn("makeHermesAdapterHarness")(function* (options?: {
   const cancelRelease = yield* Deferred.make<void>();
   const seen: ProviderRuntimeEvent[] = [];
   const calls: string[] = [];
+  const modelMetas: Array<AcpSchema.SetSessionModelRequest["_meta"] | undefined> = [];
   const requests: Array<{ method: string; params: unknown }> = [];
   const launches: Array<Parameters<NonNullable<HermesAdapterOptions["makeRuntime"]>>[0]> = [];
   const controls = {
@@ -216,9 +217,10 @@ const makeHarness = Effect.fn("makeHermesAdapterHarness")(function* (options?: {
     setMode: () => Effect.succeed({}),
     setConfigOption: () => Effect.succeed({ configOptions: [] }),
     setModel: () => Effect.void,
-    setSessionModel: (model: string) =>
+    setSessionModel: (model: string, meta?: AcpSchema.SetSessionModelRequest["_meta"]) =>
       Effect.gen(function* () {
         calls.push(`model:${model}`);
+        modelMetas.push(meta);
         if (controls.failModel) {
           controls.failModel = false;
           return yield* AcpErrors.AcpRequestError.invalidParams("Unknown model");
@@ -278,6 +280,7 @@ const makeHarness = Effect.fn("makeHermesAdapterHarness")(function* (options?: {
   return {
     adapter,
     calls,
+    modelMetas,
     launches,
     requests,
     controls,
@@ -537,6 +540,49 @@ it.layer(layer)("HermesAdapter", (it) => {
         status: "ready",
         model: nativeAlternative,
       });
+    }),
+  );
+
+  it.effect("sends reasoningEffort meta at start and on a mid-turn switch", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "auto-accept-edits",
+        modelSelection: {
+          instanceId,
+          model: nativeAlternative,
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      });
+      expect(h.calls).toEqual(["start", `model:${nativeAlternative}`, "mode:accept_edits"]);
+      expect(h.modelMetas).toEqual([{ reasoningEffort: "high" }]);
+
+      const turn = yield* h.adapter
+        .sendTurn({
+          threadId,
+          input: "Think harder",
+          modelSelection: {
+            instanceId,
+            model: nativeAlternative,
+            options: [{ id: "reasoningEffort", value: "ultra" }],
+          },
+        })
+        .pipe(Effect.forkChild);
+      const prompt = yield* h.nextPrompt;
+      // Same model, new effort: set_model still fires to carry the meta;
+      // set_mode is skipped because the runtime mode is already applied.
+      expect(h.calls.slice(0, 5)).toEqual([
+        "start",
+        `model:${nativeAlternative}`,
+        "mode:accept_edits",
+        `model:${nativeAlternative}`,
+        "prompt:1",
+      ]);
+      expect(h.modelMetas).toEqual([{ reasoningEffort: "high" }, { reasoningEffort: "ultra" }]);
+      yield* Deferred.succeed(prompt.result, { stopReason: "end_turn" });
+      yield* Fiber.join(turn);
     }),
   );
 
