@@ -80,7 +80,7 @@ jobs:
       cli_archive: true
       version: 0.0.40-hermes.${{ github.run_number }}
       ref: ${{ github.sha }}
-      release_channel: preview
+      release_channel: stable
       relay_client_tracing: false
       clerk_publishable_key: ""
       clerk_jwt_template: ""
@@ -104,7 +104,7 @@ jobs:
       cli_archive: true
       version: 0.0.40-hermes.${{ github.run_number }}
       ref: ${{ github.sha }}
-      release_channel: preview
+      release_channel: stable
       relay_client_tracing: false
       clerk_publishable_key: ""
       clerk_jwt_template: ""
