@@ -122,6 +122,30 @@ For authorized mobile verification, a missing or outdated native client is a bui
 - One concern per PR. If the description says "also", split it.
 - When babysitting: poll checks and comments newer than the last push, verify each bot finding against the source, fix real ones, dismiss false positives with a written reason. Stay quiet when nothing is new. Stop when the bots are green on the latest commit.
 
+## Fork workflow (jarmen423/t3code)
+
+This fork merges maintainer-driven work straight to `main`; the PR rules above
+apply only when the developer asks for a PR. The local pre-merge gate replaces
+CI ceremony — run all of it, fix what fails:
+
+- `vp fmt` on every file touched.
+- `vp lint` on every file touched — fix errors; leave pre-existing warnings.
+- `tsc --noEmit -p <pkg>/tsconfig.json` per package touched. The bundled
+  `node_modules/.pnpm/@effect+tsgo-*/node_modules/@effect/tsgo-*/lib/tsc` is
+  far faster than a cold `tsc` on the server package.
+- `vp test run` for every test file touched, plus test files whose assertions
+  the change affects (e.g. persisted-settings JSON deep-equals).
+- Wire-level smoke for shared protocol surfaces other work depends on (e.g.
+  `acp-mock-agent.ts` profiles): run the script and verify the real payload
+  shape before landing.
+- When changing a shared schema, grep for exhaustive consumers of the changed
+  struct outside the packages you typechecked (e.g.
+  `Object.entries(settings.providers)`, provider-key lists in tests).
+
+Repo-wide `vp check`, `vp run -r test`, and `vp run -r typecheck` stay off
+limits — GitHub Actions still runs the full suite on push as a backstop.
+Release smoke, EAS/fingerprint, and PR-machinery jobs only matter on real PRs.
+
 ## Documentation
 
 Most code changes do not need an internal documentation change. Agents can read the code.
