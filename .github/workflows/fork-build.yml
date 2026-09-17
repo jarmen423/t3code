@@ -109,3 +109,64 @@ jobs:
             release/*.AppImage
             release/*.yml
           if-no-files-found: error
+
+  # The WSL node-pty prebuild upstream bundles is skipped here — this build is
+  # for native Windows use, so the packaged WSL backend is dead weight. If you
+  # ever need it, replicate upstream's build_wsl_node_pty job and pass
+  # --wsl-prebuild to the artifact build.
+  desktop_windows:
+    name: Windows installer (nsis, unsigned)
+    runs-on: windows-2025
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+
+      - name: Install desktop dependencies
+        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install Spectre-mitigated MSVC libs
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -products * -latest -property installationPath
+          $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          $proc = Start-Process -FilePath $setupExe `
+            -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
+            "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre", "--quiet", "--norestart" `
+            -Wait -PassThru -NoNewWindow
+          if ($null -eq $proc -or $proc.ExitCode -ne 0) {
+            $code = if ($null -ne $proc) { $proc.ExitCode } else { 1 }
+            Write-Error "Visual Studio Installer failed with exit code $code"
+            exit $code
+          }
+
+      - name: Align package versions
+        shell: bash
+        run: node scripts/update-release-package-versions.ts "$T3CODE_FORK_VERSION"
+
+      - name: Build desktop artifact
+        shell: bash
+        run: vp run dist:desktop:artifact --platform win --target nsis --arch x64 --build-version "$T3CODE_FORK_VERSION" --verbose
+
+      - name: Upload desktop artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: t3-desktop-win-x64
+          path: |
+            release/*.exe
+            release/*.yml
+            release/*.blockmap
+          if-no-files-found: error
