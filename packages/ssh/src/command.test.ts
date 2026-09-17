@@ -131,6 +131,13 @@ describe("ssh command", () => {
         }),
         "t3@nightly",
       );
+      assert.equal(
+        resolveRemoteT3CliPackageSpec({
+          appVersion: "0.0.40-hermes.3",
+          updateChannel: "latest",
+        }),
+        "https://github.com/jarmen423/t3code/releases/download/v0.0.40-hermes.3/t3-0.0.40-hermes.3.tgz",
+      );
     }),
   );
 

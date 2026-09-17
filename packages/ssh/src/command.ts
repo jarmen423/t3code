@@ -371,6 +371,12 @@ export function resolveRemoteT3CliPackageSpec(input: {
 }): string {
   const appVersion = input.appVersion.trim();
   if (!input.isDevelopment && PUBLISHABLE_T3_VERSION_PATTERN.test(appVersion)) {
+    // Fork builds are published as GitHub release assets, not to npm — point
+    // the remote install at the matching tarball so SSH provisioning installs
+    // this build instead of failing on an unpublished npm version.
+    if (appVersion.includes("-hermes.")) {
+      return `https://github.com/jarmen423/t3code/releases/download/v${appVersion}/t3-${appVersion}.tgz`;
+    }
     return `t3@${appVersion}`;
   }
 
