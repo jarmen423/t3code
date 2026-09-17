@@ -2,11 +2,14 @@ name: Fork build
 
 # Fork-local build pipeline. Upstream release.yml needs infrastructure this
 # fork does not have (Blacksmith runner labels, Cloudflare relay secrets, npm
-# trusted publishing), so this builds the same installable artifacts on
-# standard GitHub runners: the `t3` CLI tarball and the Linux desktop AppImage.
+# trusted publishing), so this calls the reusable release-desktop.yml on
+# standard GitHub runners and produces the same installable artifacts:
+# desktop installers, the `t3` npm tarball, and the self-contained CLI
+# archives that SSH-managed environments download from a GitHub release.
 #
-# Signing, T3 Connect/relay, and npm publishing are all skipped — artifacts
-# are unsigned workflow artifacts, not a published release.
+# release_channel: preview keeps every artifact unsigned and emits no updater
+# manifests. SHA256SUMS is written over the CLI archives exactly like the
+# upstream release job, because remote SSH installs verify against it.
 # Remove this file before opening a PR upstream.
 
 on:
@@ -18,14 +21,103 @@ on:
 permissions:
   contents: read
 
-env:
-  T3CODE_FORK_VERSION: 0.0.40-hermes.${{ github.run_number }}
-
 jobs:
-  cli:
-    name: CLI tarball (npx t3)
+  bundle:
+    name: Build JS bundle
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      T3CODE_FORK_VERSION: 0.0.40-hermes.${{ github.run_number }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - uses: ./.github/actions/setup-apt-mirrors
+
+      # @t3tools/desktop#build compiles the Linux browser secret helper, which
+      # needs libsecret headers.
+      - name: Install browser secret helper build libraries
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+
+      - name: Install bundle dependencies
+        run: vp install --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+
+      - name: Align package versions
+        run: node scripts/update-release-package-versions.ts "$T3CODE_FORK_VERSION"
+
+      - name: Build JS bundle
+        run: vp run build:desktop
+
+      - name: Upload JS bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: js-bundle
+          path: |
+            apps/server/dist
+            apps/desktop/dist-electron
+          if-no-files-found: error
+          retention-days: 1
+
+  linux:
+    name: Linux x64
+    needs: [bundle]
+    uses: ./.github/workflows/release-desktop.yml
+    with:
+      label: Linux x64
+      runner: ubuntu-24.04
+      platform: linux
+      target: AppImage
+      arch: x64
+      rust_target: x86_64-unknown-linux-gnu
+      resource_key: linux-x64
+      cli_archive: true
+      version: 0.0.40-hermes.${{ github.run_number }}
+      ref: ${{ github.sha }}
+      release_channel: preview
+      relay_client_tracing: false
+      clerk_publishable_key: ""
+      clerk_jwt_template: ""
+      clerk_cli_oauth_client_id: ""
+      relay_url: ""
+
+  # The Windows job embeds the same-arch Linux CLI archive as its WSL runtime,
+  # so it cannot start until linux uploads cli-linux-x64.
+  windows:
+    name: Windows x64
+    needs: [bundle, linux]
+    uses: ./.github/workflows/release-desktop.yml
+    with:
+      label: Windows x64
+      runner: windows-2025
+      platform: win
+      target: nsis
+      arch: x64
+      rust_target: x86_64-pc-windows-msvc
+      resource_key: win32-x64
+      cli_archive: true
+      version: 0.0.40-hermes.${{ github.run_number }}
+      ref: ${{ github.sha }}
+      release_channel: preview
+      relay_client_tracing: false
+      clerk_publishable_key: ""
+      clerk_jwt_template: ""
+      clerk_cli_oauth_client_id: ""
+      relay_url: ""
+
+  npm_tarball:
+    name: CLI tarball (npm)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: [bundle]
+    env:
+      T3CODE_FORK_VERSION: 0.0.40-hermes.${{ github.run_number }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -40,11 +132,14 @@ jobs:
       - name: Install CLI dependencies
         run: vp install --filter=t3... --filter=@t3tools/web... --filter=@t3tools/scripts...
 
+      - name: Download JS bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: js-bundle
+          path: apps
+
       - name: Align package versions
         run: node scripts/update-release-package-versions.ts "$T3CODE_FORK_VERSION"
-
-      - name: Build CLI package
-        run: vp run --filter t3 build
 
       - name: Pack CLI tarball
         shell: bash
@@ -87,112 +182,37 @@ jobs:
           path: release-out/*.tgz
           if-no-files-found: error
 
-  desktop:
-    name: Linux AppImage
+  finalize:
+    name: Collect release assets
+    needs: [linux, windows, npm_tarball]
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 10
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
         with:
-          node-version-file: package.json
-          cache: true
-          run-install: false
+          merge-multiple: true
+          path: release-assets
 
-      - uses: ./.github/actions/setup-apt-mirrors
-
-      - name: Install Linux desktop build libraries
+      # Remote SSH installs verify their archive against this file, so write
+      # it over the exact bytes that ship — same as the upstream release job.
+      - name: Write CLI archive checksums
         shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libsecret-1-dev pkg-config
-          if ! command -v magick >/dev/null 2>&1 && ! command -v convert >/dev/null 2>&1; then
-            sudo apt-get install -y imagemagick
+          set -euo pipefail
+          cd release-assets
+          shopt -s nullglob
+          archives=(t3-*.tar.gz t3-*.zip)
+          if [[ ${#archives[@]} -eq 0 ]]; then
+            echo "No CLI archives were produced." >&2
+            exit 1
           fi
+          sha256sum "${archives[@]}" > SHA256SUMS
+          cat SHA256SUMS
 
-      - name: Install desktop dependencies
-        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-gnu
-
-      - name: Align package versions
-        run: node scripts/update-release-package-versions.ts "$T3CODE_FORK_VERSION"
-
-      - name: Build desktop artifact
-        run: vp run dist:desktop:artifact --platform linux --target AppImage --arch x64 --build-version "$T3CODE_FORK_VERSION" --verbose
-
-      - name: Upload desktop artifact
+      - name: Upload release assets
         uses: actions/upload-artifact@v7
         with:
-          name: t3-desktop-linux-x64
-          path: |
-            release/*.AppImage
-            release/*.yml
-          if-no-files-found: error
-
-  # The WSL node-pty prebuild upstream bundles is skipped here — this build is
-  # for native Windows use, so the packaged WSL backend is dead weight. If you
-  # ever need it, replicate upstream's build_wsl_node_pty job and pass
-  # --wsl-prebuild to the artifact build.
-  desktop_windows:
-    name: Windows installer (nsis, unsigned)
-    runs-on: windows-2025
-    timeout-minutes: 120
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version-file: package.json
-          cache: false
-          run-install: false
-
-      - name: Install desktop dependencies
-        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
-
-      - name: Install Spectre-mitigated MSVC libs
-        shell: pwsh
-        run: |
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $installPath = & $vswhere -products * -latest -property installationPath
-          $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
-          $proc = Start-Process -FilePath $setupExe `
-            -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
-            "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre", "--quiet", "--norestart" `
-            -Wait -PassThru -NoNewWindow
-          if ($null -eq $proc -or $proc.ExitCode -ne 0) {
-            $code = if ($null -ne $proc) { $proc.ExitCode } else { 1 }
-            Write-Error "Visual Studio Installer failed with exit code $code"
-            exit $code
-          }
-
-      - name: Align package versions
-        shell: bash
-        run: node scripts/update-release-package-versions.ts "$T3CODE_FORK_VERSION"
-
-      - name: Build desktop artifact
-        shell: bash
-        run: vp run dist:desktop:artifact --platform win --target nsis --arch x64 --build-version "$T3CODE_FORK_VERSION" --verbose
-
-      - name: Upload desktop artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: t3-desktop-win-x64
-          path: |
-            release/*.exe
-            release/*.yml
-            release/*.blockmap
+          name: t3-release-assets
+          path: release-assets/*
           if-no-files-found: error
