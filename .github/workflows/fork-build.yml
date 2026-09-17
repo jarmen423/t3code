@@ -1,0 +1,111 @@
+name: Fork build
+
+# Fork-local build pipeline. Upstream release.yml needs infrastructure this
+# fork does not have (Blacksmith runner labels, Cloudflare relay secrets, npm
+# trusted publishing), so this builds the same installable artifacts on
+# standard GitHub runners: the `t3` CLI tarball and the Linux desktop AppImage.
+#
+# Signing, T3 Connect/relay, and npm publishing are all skipped — artifacts
+# are unsigned workflow artifacts, not a published release.
+# Remove this file before opening a PR upstream.
+
+on:
+  push:
+    branches:
+      - feat/hermes-acp-provider
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  T3CODE_FORK_VERSION: 0.0.40-hermes.${{ github.run_number }}
+
+jobs:
+  cli:
+    name: CLI tarball (npx t3)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install CLI dependencies
+        run: vp install --filter=t3... --filter=@t3tools/web... --filter=@t3tools/scripts...
+
+      - name: Align package versions
+        run: node scripts/update-release-package-versions.ts "$T3CODE_FORK_VERSION"
+
+      - name: Build CLI package
+        run: vp run --filter t3 build
+
+      - name: Pack CLI tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/release-out"
+          cd apps/server
+          vp pm pack --pack-destination "$GITHUB_WORKSPACE/release-out"
+
+      - name: Upload CLI tarball
+        uses: actions/upload-artifact@v7
+        with:
+          name: t3-cli
+          path: release-out/*.tgz
+          if-no-files-found: error
+
+  desktop:
+    name: Linux AppImage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - uses: ./.github/actions/setup-apt-mirrors
+
+      - name: Install Linux desktop build libraries
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev pkg-config
+          if ! command -v magick >/dev/null 2>&1 && ! command -v convert >/dev/null 2>&1; then
+            sudo apt-get install -y imagemagick
+          fi
+
+      - name: Install desktop dependencies
+        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Align package versions
+        run: node scripts/update-release-package-versions.ts "$T3CODE_FORK_VERSION"
+
+      - name: Build desktop artifact
+        run: vp run dist:desktop:artifact --platform linux --target AppImage --arch x64 --build-version "$T3CODE_FORK_VERSION" --verbose
+
+      - name: Upload desktop artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: t3-desktop-linux-x64
+          path: |
+            release/*.AppImage
+            release/*.yml
+          if-no-files-found: error
