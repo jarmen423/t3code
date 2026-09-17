@@ -1,5 +1,13 @@
 # T3 Code
 
+> [!NOTE]
+> **Community fork** tracking [pingdotgg/t3code](https://github.com/pingdotgg/t3code). This fork adds
+> **[Hermes Agent](https://hermes-agent.nousresearch.com) as an ACP provider** — full configured
+> model catalog in the picker, Hermes slash commands (`/model`, `/compress`, `/steer`, `/queue`, …),
+> and Hermes approval modes.
+>
+> Unsigned Windows, Linux, and `t3` CLI builds: **[Releases](https://github.com/jarmen423/t3code/releases)**
+
 T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
 
 Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, OpenCode, and Google Antigravity. If they're set up on your computer, T3 Code can control them.
