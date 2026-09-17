@@ -58,6 +58,8 @@ action, and "allow for this session" is remembered per operation.
 ## Notes
 
 - Threads cannot be rolled back inside Hermes — start a new thread instead.
-- `/compress` is available as the compact-conversation command.
+- The composer shows whatever slash commands Hermes advertises — `/model`,
+  `/compress`, `/steer`, `/queue`, `/context`, and the rest — plus T3 Code's
+  own built-ins. `/compress` is the compact-conversation command.
 - The mobile app drives Hermes through the connected server; Hermes never runs
   on the phone itself.

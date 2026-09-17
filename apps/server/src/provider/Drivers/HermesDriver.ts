@@ -1,10 +1,14 @@
 import { HermesSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import type * as EffectAcpSchema from "effect-acp/schema";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
@@ -12,9 +16,9 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeHermesTextGeneration } from "../../textGeneration/HermesTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeHermesAdapter } from "../Layers/HermesAdapter.ts";
-import { makeHermesProvider } from "../Layers/HermesProvider.ts";
+import { makeHermesProvider, type HermesProbeResult } from "../Layers/HermesProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
-import { makeHermesAcpRuntime } from "../acp/HermesAcpSupport.ts";
+import { makeHermesAcpRuntime, resolveHermesAuthMethodId } from "../acp/HermesAcpSupport.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -75,19 +79,55 @@ export const HermesDriver: ProviderDriver<HermesSettings, HermesDriverEnv> = {
       });
       const effectiveConfig = { ...config, enabled } satisfies HermesSettings;
 
-      // `initialize` is a single local round trip, so the probe never
-      // authenticates or opens a session — those could start an interactive
-      // setup or boot MCP servers.
-      const probe = Effect.gen(function* () {
-        const runtime = yield* makeHermesAcpRuntime({
-          hermesSettings: effectiveConfig,
-          environment: processEnv,
-          childProcessSpawner: spawner,
-          cwd: serverConfig.stateDir,
-          clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
-        }).pipe(Effect.provideService(Crypto.Crypto, crypto));
-        return yield* runtime.initialize();
-      }).pipe(Effect.scoped);
+      // `initialize` is a single local round trip, so it stays the probe's
+      // health signal — it never authenticates or opens a session, which could
+      // start an interactive setup or boot MCP servers. When asked, the probe
+      // additionally opens a throwaway session to harvest the advertised
+      // models and slash commands for the pickers; its failure cannot
+      // downgrade a healthy probe.
+      const probe = (includeSessionMetadata: boolean) =>
+        Effect.gen(function* () {
+          const runtime = yield* makeHermesAcpRuntime({
+            hermesSettings: effectiveConfig,
+            environment: processEnv,
+            childProcessSpawner: spawner,
+            cwd: serverConfig.stateDir,
+            clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
+          }).pipe(Effect.provideService(Crypto.Crypto, crypto));
+          const initialize = yield* runtime.initialize();
+          const session =
+            includeSessionMetadata && resolveHermesAuthMethodId(initialize) !== undefined
+              ? yield* Effect.gen(function* () {
+                  // Commands arrive as an `available_commands_update` session
+                  // notification rather than on the `session/new` response, so
+                  // the events stream is drained for it alongside the start.
+                  const probeScope = yield* Effect.scope;
+                  const commandsDeferred =
+                    yield* Deferred.make<ReadonlyArray<EffectAcpSchema.AvailableCommand>>();
+                  yield* Stream.runForEach(runtime.getEvents(), (event) =>
+                    event._tag === "AvailableCommandsUpdated"
+                      ? Deferred.succeed(commandsDeferred, event.availableCommands)
+                      : Effect.void,
+                  ).pipe(Effect.forkIn(probeScope));
+                  const started = yield* runtime.start();
+                  const commands = yield* Deferred.await(commandsDeferred).pipe(
+                    Effect.timeoutOption("3 seconds"),
+                    Effect.map(Option.getOrUndefined),
+                  );
+                  return { models: started.sessionSetupResult.models, commands };
+                }).pipe(
+                  Effect.match({
+                    onFailure: () => undefined,
+                    onSuccess: (value) => value,
+                  }),
+                )
+              : undefined;
+          return {
+            initialize,
+            models: session?.models,
+            commands: session?.commands,
+          } satisfies HermesProbeResult;
+        }).pipe(Effect.scoped);
 
       const provider = yield* makeHermesProvider(effectiveConfig, {
         stampIdentity: (draft) => Effect.sync(() => stampIdentity(draft)),

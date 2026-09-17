@@ -75,7 +75,14 @@ export function buildHermesModelsFromSession(
     const slug = model.modelId.trim();
     if (!slug || seen.has(slug)) return [];
     seen.add(slug);
-    const subProvider = slug.includes(":") ? slug.slice(0, slug.indexOf(":")) : undefined;
+    // `custom:<provider>:<model>` ids group under the real provider name.
+    const segments = slug.split(":");
+    const subProvider =
+      segments.length > 2 && segments[0] === "custom"
+        ? segments[1]
+        : segments.length > 1
+          ? segments[0]
+          : undefined;
     return [
       {
         slug,
@@ -136,13 +143,23 @@ interface HermesProviderState {
   readonly authRevision: number;
 }
 
+export interface HermesProbeResult {
+  readonly initialize: EffectAcpSchema.InitializeResponse;
+  readonly models: EffectAcpSchema.SessionModelState | null | undefined;
+  readonly commands: ReadonlyArray<EffectAcpSchema.AvailableCommand> | undefined;
+}
+
 interface HermesProviderOptions {
   readonly stampIdentity: (snapshot: ServerProviderDraft) => Effect.Effect<ServerProvider>;
-  /** Spawns a disposable `hermes acp` and returns `initialize` only. */
-  readonly probe: Effect.Effect<
-    EffectAcpSchema.InitializeResponse,
-    EffectAcpErrors.AcpError | ProviderSetupError
-  >;
+  /**
+   * Spawns a disposable `hermes acp`. `initialize` is the health/auth signal;
+   * `models`/`commands` come from a throwaway session the probe only opens
+   * when `includeSessionMetadata` is set — `session/new` boots the agent and
+   * MCP discovery, so steady-state checks stay initialize-only.
+   */
+  readonly probe: (
+    includeSessionMetadata: boolean,
+  ) => Effect.Effect<HermesProbeResult, EffectAcpErrors.AcpError | ProviderSetupError>;
   readonly supportsTextGeneration: Effect.Effect<boolean>;
   readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
 }
@@ -185,12 +202,20 @@ export const makeHermesProvider = Effect.fn("makeHermesProvider")(function* (
   const checkProvider = Effect.fn("checkHermesProvider")(function* () {
     if (!settings.enabled) return yield* getSnapshot;
     const before = yield* SubscriptionRef.get(metadata);
-    const result = yield* options.probe.pipe(
-      Effect.timeoutOption(HEALTH_CHECK_TIMEOUT),
-      Effect.result,
-    );
-    const initialized =
+    // Session-advertised models and slash commands are otherwise invisible
+    // until the first turn starts a session, so a cold list upgrades this
+    // check to a session probe. Once populated, `onSessionStarted` and
+    // `onAvailableCommands` keep them fresh.
+    const includeSessionMetadata =
+      !before.draft.models.some(
+        (model) => !model.isCustom && model.slug !== HERMES_DEFAULT_MODEL_SLUG,
+      ) || before.draft.slashCommands.length === 0;
+    const result = yield* options
+      .probe(includeSessionMetadata)
+      .pipe(Effect.timeoutOption(HEALTH_CHECK_TIMEOUT), Effect.result);
+    const probed =
       Result.isSuccess(result) && Option.isSome(result.success) ? result.success.value : undefined;
+    const initialized = probed?.initialize;
     const failure = Result.isFailure(result) ? result.failure : undefined;
     const missingInstallation = failure !== undefined && isMissingInstallation(failure);
     const auth = initialized !== undefined ? hermesAuthFromInitialize(initialized) : undefined;
@@ -238,6 +263,12 @@ export const makeHermesProvider = Effect.fn("makeHermesProvider")(function* (
           ...(auth !== undefined ? { auth } : {}),
           supportsTextGeneration,
           ...(missingInstallation ? { models: [], slashCommands: [] } : {}),
+          ...(probed?.models != null
+            ? { models: buildHermesModelsFromSession(probed.models, settings.customModels) }
+            : {}),
+          ...(probed?.commands !== undefined
+            ? { slashCommands: nativeCommands(probed.commands) }
+            : {}),
           ...(message ? { message } : {}),
         },
       } satisfies HermesProviderState;
