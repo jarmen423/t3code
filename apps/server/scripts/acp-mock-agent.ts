@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Schema from "effect/Schema";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -23,6 +24,8 @@ const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
+const emitMuseElicitation = process.env.T3_ACP_EMIT_MUSE_ELICITATION === "1";
+const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
 const emitXAiExitPlanMode = process.env.T3_ACP_EMIT_XAI_EXIT_PLAN_MODE === "1";
 const emitXAiPlanMdWrite = process.env.T3_ACP_EMIT_XAI_PLAN_MD_WRITE === "1";
@@ -1418,6 +1421,42 @@ const program = Effect.gen(function* () {
           return yield* Effect.never;
         }
 
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitMuseElicitation) {
+        // Mirrors the real muse-acp-bridge: MSP userInput questions arrive as
+        // `elicitation/create` with a `header: text` line per question and a
+        // `q{i}` schema property each; only `accept` + `content` counts as an
+        // answer, everything else cancels the host-side question.
+        const result = yield* agent.client.extRequest("elicitation/create", {
+          sessionId: requestedSessionId,
+          mode: "form",
+          message: "Scope: Which scope should Muse use?\nNotes: Anything Muse should keep in mind?",
+          requestedSchema: {
+            type: "object",
+            properties: {
+              q0: { type: "string", enum: ["Workspace", "Session"] },
+              q1: { type: "string" },
+            },
+            required: ["q0"],
+          },
+        });
+        const encodedResult = yield* encodeUnknownJson(result).pipe(
+          Effect.mapError(() =>
+            AcpError.AcpRequestError.internalError("Could not encode elicitation result."),
+          ),
+        );
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: `elicitation:${encodedResult}`,
+            },
+          },
+        });
         return { stopReason: "end_turn" };
       }
 
