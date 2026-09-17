@@ -161,19 +161,74 @@ export function currentHermesModelIdFromSessionSetup(
   return sessionSetupResult.models?.currentModelId?.trim() || undefined;
 }
 
+const HERMES_REASONING_EFFORT_TOKEN = /^[a-z0-9][a-z0-9._-]{0,31}$/i;
+
+export function isValidHermesReasoningEffortToken(value: string): boolean {
+  return HERMES_REASONING_EFFORT_TOKEN.test(value);
+}
+
+export function normalizeHermesReasoningEffort(
+  value: string | null | undefined,
+): string | undefined {
+  const effort = value?.trim().toLowerCase();
+  return effort && isValidHermesReasoningEffortToken(effort) ? effort : undefined;
+}
+
+/**
+ * Hermes advertises the session's reasoning level on the current model's
+ * `_meta.reasoningEffort`; levels ride `session/set_model` `_meta` back.
+ */
+export function currentHermesReasoningEffortFromSessionSetup(
+  sessionSetupResult:
+    | EffectAcpSchema.LoadSessionResponse
+    | EffectAcpSchema.NewSessionResponse
+    | EffectAcpSchema.ResumeSessionResponse,
+): string | undefined {
+  const modelState = sessionSetupResult.models;
+  if (!modelState) {
+    return undefined;
+  }
+  const currentModelId = modelState.currentModelId.trim();
+  if (currentModelId.length === 0) {
+    return undefined;
+  }
+  const currentModel = modelState.availableModels.find(
+    (model) => model.modelId.trim() === currentModelId,
+  );
+  const reasoningEffort = currentModel?._meta?.reasoningEffort;
+  return typeof reasoningEffort === "string"
+    ? normalizeHermesReasoningEffort(reasoningEffort)
+    : undefined;
+}
+
 export function applyHermesAcpModelSelection<E>(input: {
   readonly runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "setSessionModel">;
   readonly currentModelId: string | undefined;
+  readonly currentReasoningEffort?: string | undefined;
   readonly requestedModelId: string | undefined;
+  readonly requestedReasoningEffort?: string | undefined;
   readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
 }): Effect.Effect<string | undefined, E> {
   // The product slug is never sent over the wire; it keeps the session's model.
   const requestedModelId =
     input.requestedModelId === HERMES_DEFAULT_MODEL_SLUG ? undefined : input.requestedModelId;
-  if (requestedModelId === undefined || requestedModelId === input.currentModelId) {
+  const modelChanged = requestedModelId !== undefined && requestedModelId !== input.currentModelId;
+  const reasoningProvided = input.requestedReasoningEffort !== undefined;
+  const reasoningEffort = reasoningProvided
+    ? normalizeHermesReasoningEffort(input.requestedReasoningEffort)
+    : undefined;
+  const reasoningEffortChanged =
+    reasoningProvided && reasoningEffort !== input.currentReasoningEffort;
+  const targetModelId = requestedModelId ?? input.currentModelId;
+  if ((!modelChanged && !reasoningEffortChanged) || targetModelId === undefined) {
     return Effect.succeed(input.currentModelId);
   }
+  // An invalid effort value is dropped rather than forwarded; when no effort
+  // was requested at all, an omitted meta must not be treated as an explicit
+  // clear of the session's current level.
+  const reasoningMeta =
+    reasoningProvided && reasoningEffort !== undefined ? { reasoningEffort } : undefined;
   return input.runtime
-    .setSessionModel(requestedModelId)
-    .pipe(Effect.mapError(input.mapError), Effect.as(requestedModelId));
+    .setSessionModel(targetModelId, reasoningMeta)
+    .pipe(Effect.mapError(input.mapError), Effect.as(targetModelId));
 }

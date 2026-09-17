@@ -99,7 +99,7 @@ jobs:
   build:
     name: Build ${{ inputs.label }}
     runs-on: ${{ inputs.runner }}
-    timeout-minutes: 60  # fork: standard GitHub runners are slower than Blacksmith
+    timeout-minutes: 60 # fork: standard GitHub runners are slower than Blacksmith
     env:
       T3CODE_CLERK_PUBLISHABLE_KEY: ${{ inputs.clerk_publishable_key }}
       T3CODE_CLERK_JWT_TEMPLATE: ${{ inputs.clerk_jwt_template }}

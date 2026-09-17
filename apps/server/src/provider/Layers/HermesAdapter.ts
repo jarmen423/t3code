@@ -13,6 +13,7 @@ import {
   TurnId,
   type TurnCompletedPayload,
 } from "@t3tools/contracts";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -61,8 +62,10 @@ import {
   applyHermesAcpMode,
   applyHermesAcpModelSelection,
   currentHermesModelIdFromSessionSetup,
+  currentHermesReasoningEffortFromSessionSetup,
   hermesPermissionMode,
   makeHermesAcpRuntime,
+  normalizeHermesReasoningEffort,
   resolveHermesAcpBaseModelId,
   type HermesAcpRuntimeInput,
 } from "../acp/HermesAcpSupport.ts";
@@ -135,6 +138,7 @@ interface HermesSessionContext {
   /** Bumped by interruptTurn so a steer still queued on promptLock is discarded. */
   stopEpoch: number;
   currentModelId: string | undefined;
+  currentReasoningEffort: string | undefined;
   stopped: boolean;
   closed: boolean;
   /** Set when the Hermes process died on its own; skips the cancel handshake. */
@@ -507,10 +511,19 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (
           const requestedModelId = modelSelection?.model
             ? resolveHermesAcpBaseModelId(modelSelection.model)
             : undefined;
+          const currentStartReasoningEffort = currentHermesReasoningEffortFromSessionSetup(
+            started.sessionSetupResult,
+          );
+          const requestedStartReasoningEffort = getModelSelectionStringOptionValue(
+            modelSelection,
+            "reasoningEffort",
+          );
           const currentModelId = yield* applyHermesAcpModelSelection({
             runtime: acp,
             currentModelId: currentHermesModelIdFromSessionSetup(started.sessionSetupResult),
+            currentReasoningEffort: currentStartReasoningEffort,
             requestedModelId,
+            requestedReasoningEffort: requestedStartReasoningEffort,
             mapError: (cause) => cause,
           });
           yield* applyHermesAcpMode({
@@ -561,6 +574,10 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (
             generation: 0,
             stopEpoch: 0,
             currentModelId,
+            currentReasoningEffort:
+              requestedStartReasoningEffort !== undefined
+                ? normalizeHermesReasoningEffort(requestedStartReasoningEffort)
+                : currentStartReasoningEffort,
             stopped: false,
             closed: false,
             disconnected: false,
@@ -837,6 +854,10 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (
             const turnModelId = input.modelSelection?.model
               ? resolveHermesAcpBaseModelId(input.modelSelection.model)
               : undefined;
+            const turnReasoningEffort = getModelSelectionStringOptionValue(
+              input.modelSelection,
+              "reasoningEffort",
+            );
             const turnId = context.activeTurnId ?? TurnId.make(yield* randomId);
             const steering = context.activeTurnId !== undefined;
             const turn: TurnIntent = {
@@ -858,10 +879,15 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (
             const currentModelId = yield* applyHermesAcpModelSelection({
               runtime: context.acp,
               currentModelId: context.currentModelId,
+              currentReasoningEffort: context.currentReasoningEffort,
               requestedModelId: turnModelId,
+              requestedReasoningEffort: turnReasoningEffort,
               mapError: (cause) => cause,
             });
             context.currentModelId = currentModelId;
+            if (turnReasoningEffort !== undefined) {
+              context.currentReasoningEffort = normalizeHermesReasoningEffort(turnReasoningEffort);
+            }
             if (!steering) {
               yield* emit({
                 type: "turn.started",

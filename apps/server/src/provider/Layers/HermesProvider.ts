@@ -1,6 +1,7 @@
 import {
   type CustomModelSetting,
   type HermesSettings,
+  type ModelCapabilities,
   ProviderDriverKind,
   type ProviderSetupError,
   type ServerProvider,
@@ -20,7 +21,11 @@ import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import type { AcpSessionRuntimeStartResult } from "../acp/AcpSessionRuntime.ts";
-import { HERMES_DEFAULT_MODEL_SLUG, resolveHermesAuthMethodId } from "../acp/HermesAcpSupport.ts";
+import {
+  HERMES_DEFAULT_MODEL_SLUG,
+  isValidHermesReasoningEffortToken,
+  resolveHermesAuthMethodId,
+} from "../acp/HermesAcpSupport.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
@@ -60,6 +65,104 @@ function isMissingInstallation(error: EffectAcpErrors.AcpError | ProviderSetupEr
   );
 }
 
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" ? value.trim() || undefined : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hermesReasoningOptionsFromModel(model: EffectAcpSchema.ModelInfo): {
+  readonly options: ReadonlyArray<{
+    value: string;
+    label: string;
+    description?: string;
+    isDefault?: boolean;
+  }>;
+  readonly currentValue: string | undefined;
+} {
+  const meta = model._meta;
+  if (!meta || meta.supportsReasoningEffort === false) {
+    return { options: [], currentValue: undefined };
+  }
+
+  const currentEffort = nonEmptyString(meta.reasoningEffort);
+  const advertisedOptions = Array.isArray(meta.reasoningEfforts) ? meta.reasoningEfforts : [];
+  const seen = new Set<string>();
+  const options: Array<{
+    value: string;
+    label: string;
+    description?: string;
+    advertisedDefault: boolean;
+  }> = [];
+
+  for (const entry of advertisedOptions) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+    const rawValue = nonEmptyString(entry.value);
+    const rawId = nonEmptyString(entry.id);
+    const value =
+      rawValue && isValidHermesReasoningEffortToken(rawValue)
+        ? rawValue
+        : rawId && isValidHermesReasoningEffortToken(rawId)
+          ? rawId
+          : undefined;
+    if (value === undefined || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    const description = nonEmptyString(entry.description);
+    options.push({
+      value,
+      label: nonEmptyString(entry.label) ?? value,
+      ...(description ? { description } : {}),
+      advertisedDefault: entry.default === true || entry.isDefault === true,
+    });
+  }
+
+  const currentValue =
+    currentEffort && options.some((option) => option.value === currentEffort)
+      ? currentEffort
+      : undefined;
+  const advertisedDefaults = options.filter((option) => option.advertisedDefault);
+  const selectedDefault =
+    advertisedDefaults.find((option) => option.value === currentValue)?.value ??
+    advertisedDefaults[0]?.value;
+  return {
+    options: options.map(({ value, label, description }) => ({
+      value,
+      label,
+      ...(description ? { description } : {}),
+      ...(value === selectedDefault ? { isDefault: true } : {}),
+    })),
+    currentValue: currentValue ?? selectedDefault,
+  };
+}
+
+export function buildHermesModelCapabilities(model: EffectAcpSchema.ModelInfo): ModelCapabilities {
+  const reasoning = hermesReasoningOptionsFromModel(model);
+  return reasoning.options.length > 0
+    ? createModelCapabilities({
+        optionDescriptors: [
+          {
+            id: "reasoningEffort",
+            label: "Reasoning",
+            type: "select",
+            options: reasoning.options.map((option) => ({
+              id: option.value,
+              label: option.label,
+              ...(option.description ? { description: option.description } : {}),
+              ...(option.isDefault ? { isDefault: true } : {}),
+            })),
+            ...(reasoning.currentValue ? { currentValue: reasoning.currentValue } : {}),
+          },
+        ],
+      })
+    : EMPTY_MODEL_CAPABILITIES;
+}
+
 /**
  * Hermes model ids are provider-qualified (`openrouter:x`, `xai-oauth:y`); the
  * prefix doubles as the picker's sub-provider group. `description` repeats the
@@ -90,7 +193,7 @@ export function buildHermesModelsFromSession(
         ...(subProvider ? { subProvider } : {}),
         isCustom: false,
         ...(slug === currentModelId ? { isDefault: true } : {}),
-        capabilities: EMPTY_MODEL_CAPABILITIES,
+        capabilities: buildHermesModelCapabilities(model),
       },
     ];
   });

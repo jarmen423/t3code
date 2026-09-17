@@ -172,6 +172,91 @@ describe("buildHermesModelsFromSession", () => {
     expect(models[3]?.isCustom).toBe(true);
     expect(models[3]?.name).toBe("Custom Grok");
   });
+
+  it("surfaces reasoningEffort metadata as a select descriptor on native models", () => {
+    const models = buildHermesModelsFromSession(
+      {
+        currentModelId: "openrouter:a",
+        availableModels: [
+          {
+            modelId: "openrouter:a",
+            name: "A",
+            _meta: {
+              supportsReasoningEffort: true,
+              reasoningEffort: "high",
+              reasoningEfforts: [
+                { value: "none", label: "Off" },
+                { value: "low", label: "Low" },
+                { value: "high", label: "High", default: true },
+                { value: "ultra", label: "Ultra" },
+              ],
+            },
+          },
+          { modelId: "openrouter:b", name: "B" },
+        ],
+      },
+      [],
+    );
+    // The product slug and models without reasoning meta get no descriptor.
+    expect(models[0]?.capabilities.optionDescriptors).toEqual([]);
+    expect(models[2]?.capabilities.optionDescriptors).toEqual([]);
+    expect(models[1]?.capabilities.optionDescriptors).toEqual([
+      {
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select",
+        options: [
+          { id: "none", label: "Off" },
+          { id: "low", label: "Low" },
+          { id: "high", label: "High", isDefault: true },
+          { id: "ultra", label: "Ultra" },
+        ],
+        currentValue: "high",
+      },
+    ]);
+  });
+
+  it("ignores malformed effort entries and an unsupported flag", () => {
+    const models = buildHermesModelsFromSession(
+      {
+        currentModelId: "openrouter:a",
+        availableModels: [
+          {
+            modelId: "openrouter:a",
+            name: "A",
+            _meta: {
+              supportsReasoningEffort: true,
+              reasoningEffort: "not-on-the-ladder",
+              reasoningEfforts: [
+                { value: "low", label: "Low" },
+                { value: "bogus!!", label: "Bad" },
+                "not-an-object",
+                { value: "low", label: "Low duplicate" },
+              ],
+            },
+          },
+          {
+            modelId: "openrouter:c",
+            name: "C",
+            _meta: {
+              supportsReasoningEffort: false,
+              reasoningEfforts: [{ value: "low", label: "Low" }],
+            },
+          },
+        ],
+      },
+      [],
+    );
+    expect(models[1]?.capabilities.optionDescriptors).toEqual([
+      {
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select",
+        options: [{ id: "low", label: "Low" }],
+      },
+    ]);
+    expect(models[2]?.capabilities.optionDescriptors).toEqual([]);
+  });
 });
 
 describe("makeHermesProvider probe", () => {
