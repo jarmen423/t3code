@@ -21,6 +21,23 @@ const decodeSettings = Schema.decodeSync(HermesSettings);
 const instanceId = ProviderInstanceId.make("hermes-test");
 const driver = ProviderDriverKind.make("hermes");
 
+const FALLBACK_REASONING_DESCRIPTOR = {
+  id: "reasoningEffort",
+  label: "Reasoning",
+  type: "select",
+  options: [
+    { id: "none", label: "Off" },
+    { id: "minimal", label: "Minimal" },
+    { id: "low", label: "Low" },
+    { id: "medium", label: "Medium" },
+    { id: "high", label: "High", isDefault: true },
+    { id: "xhigh", label: "Extra High" },
+    { id: "max", label: "Max" },
+    { id: "ultra", label: "Ultra" },
+  ],
+  currentValue: "high",
+} as const;
+
 const initializeResult = {
   protocolVersion: 1,
   agentCapabilities: {},
@@ -126,6 +143,9 @@ describe("buildHermesModelsFromSession", () => {
     expect(buildHermesModelsFromSession(undefined, undefined).map((model) => model.slug)).toEqual([
       HERMES_DEFAULT_MODEL_SLUG,
     ]);
+    expect(
+      buildHermesModelsFromSession(undefined, undefined)[0]?.capabilities?.optionDescriptors,
+    ).toEqual([FALLBACK_REASONING_DESCRIPTOR]);
   });
 
   it("groups `custom:<provider>:<model>` ids under the real provider", () => {
@@ -197,10 +217,7 @@ describe("buildHermesModelsFromSession", () => {
       },
       [],
     );
-    // The product slug and models without reasoning meta get no descriptor.
-    expect(models[0]?.capabilities.optionDescriptors).toEqual([]);
-    expect(models[2]?.capabilities.optionDescriptors).toEqual([]);
-    expect(models[1]?.capabilities.optionDescriptors).toEqual([
+    const advertised = [
       {
         id: "reasoningEffort",
         label: "Reasoning",
@@ -213,7 +230,13 @@ describe("buildHermesModelsFromSession", () => {
         ],
         currentValue: "high",
       },
-    ]);
+    ];
+    // The product slug stays selected in the composer, so it copies the current
+    // native model's advertised ladder. Models that omit _meta still get the
+    // fallback none..ultra control.
+    expect(models[0]?.capabilities?.optionDescriptors).toEqual(advertised);
+    expect(models[1]?.capabilities?.optionDescriptors).toEqual(advertised);
+    expect(models[2]?.capabilities?.optionDescriptors).toEqual([FALLBACK_REASONING_DESCRIPTOR]);
   });
 
   it("ignores malformed effort entries and an unsupported flag", () => {
@@ -247,7 +270,7 @@ describe("buildHermesModelsFromSession", () => {
       },
       [],
     );
-    expect(models[1]?.capabilities.optionDescriptors).toEqual([
+    expect(models[1]?.capabilities?.optionDescriptors).toEqual([
       {
         id: "reasoningEffort",
         label: "Reasoning",
@@ -255,7 +278,31 @@ describe("buildHermesModelsFromSession", () => {
         options: [{ id: "low", label: "Low" }],
       },
     ]);
-    expect(models[2]?.capabilities.optionDescriptors).toEqual([]);
+    expect(models[0]?.capabilities?.optionDescriptors).toEqual(
+      models[1]?.capabilities?.optionDescriptors,
+    );
+    expect(models[2]?.capabilities?.optionDescriptors).toEqual([]);
+  });
+
+  it("hides reasoning on the product slug when the current model opts out", () => {
+    const models = buildHermesModelsFromSession(
+      {
+        currentModelId: "openrouter:c",
+        availableModels: [
+          {
+            modelId: "openrouter:c",
+            name: "C",
+            _meta: {
+              supportsReasoningEffort: false,
+              reasoningEfforts: [{ value: "low", label: "Low" }],
+            },
+          },
+        ],
+      },
+      [],
+    );
+    expect(models[0]?.capabilities?.optionDescriptors).toEqual([]);
+    expect(models[1]?.capabilities?.optionDescriptors).toEqual([]);
   });
 });
 

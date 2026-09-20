@@ -45,6 +45,17 @@ const EFFORT_CHOICES = [
   { id: "xhigh", label: "Extra High" },
 ] as const;
 
+const HERMES_EFFORT_CHOICES = [
+  { id: "none", label: "Off" },
+  { id: "minimal", label: "Minimal" },
+  { id: "low", label: "Low" },
+  { id: "medium", label: "Medium" },
+  { id: "high", label: "High", isDefault: true },
+  { id: "xhigh", label: "Extra High" },
+  { id: "max", label: "Max" },
+  { id: "ultra", label: "Ultra" },
+] as const;
+
 /**
  * Option ids each adapter actually reads off a turn's model selection, with
  * the usual choices pre-filled. Anything else the user types is stored
@@ -88,6 +99,9 @@ export const DESCRIPTOR_PRESETS_BY_KIND: Partial<
   ],
   [ProviderDriverKind.make("grok")]: [
     { id: "reasoningEffort", label: "Reasoning", type: "select", choices: EFFORT_CHOICES },
+  ],
+  [ProviderDriverKind.make("hermes")]: [
+    { id: "reasoningEffort", label: "Reasoning", type: "select", choices: HERMES_EFFORT_CHOICES },
   ],
   [ProviderDriverKind.make("opencode")]: [
     { id: "variant", label: "Reasoning", type: "select", choices: EFFORT_CHOICES },
