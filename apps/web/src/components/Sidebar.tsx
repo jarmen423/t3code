@@ -117,6 +117,7 @@ import {
 } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useImportAgentThreads } from "../hooks/useImportAgentThreads";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
@@ -2156,6 +2157,7 @@ export default function Sidebar() {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  const { importForProject } = useImportAgentThreads();
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
       toastManager.add({
@@ -4074,6 +4076,12 @@ export default function Sidebar() {
           return;
         }
         switch (clicked.value) {
+          case "import-agent-threads":
+            await importForProject({
+              environmentId: thread.environmentId,
+              projectId: thread.projectId,
+            });
+            return;
           case "project-settings": {
             const projectGroup = projectGroupsRef.current.find((group) =>
               group.memberProjectRefs.some(
@@ -4243,6 +4251,7 @@ export default function Sidebar() {
       copyThreadIdToClipboard,
       deleteThread,
       handleMultiSelectContextMenu,
+      importForProject,
       markThreadUnread,
       openProjectSettings,
       projectByKey,

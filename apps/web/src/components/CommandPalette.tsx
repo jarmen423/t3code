@@ -47,6 +47,7 @@ import {
   FileSearchIcon,
   FolderIcon,
   FolderPlusIcon,
+  ImportIcon,
   LinkIcon,
   MessageSquareIcon,
   MonitorIcon,
@@ -74,6 +75,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useImportAgentThreads } from "../hooks/useImportAgentThreads";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { useClientSettings } from "../hooks/useSettings";
@@ -698,6 +700,7 @@ function OpenCommandPaletteDialog(props: {
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
+  const { importForProject } = useImportAgentThreads();
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
   });
@@ -2073,6 +2076,33 @@ function OpenCommandPaletteDialog(props: {
         await navigate({
           to: "/projects/$projectKey",
           params: { projectKey: contextualProjectGroup.projectKey },
+        });
+      },
+    });
+    const importProjectRef = contextualProjectRef ?? {
+      environmentId: contextualProjectGroup.environmentId,
+      projectId: contextualProjectGroup.id,
+    };
+    actionItems.push({
+      kind: "action",
+      value: "action:import-agent-threads",
+      searchTerms: [
+        "import",
+        "claude",
+        "codex",
+        "threads",
+        "history",
+        "conversations",
+        "agent",
+        "sessions",
+      ],
+      title: "Import Claude Code and Codex threads",
+      description: contextualProjectGroup.displayName,
+      icon: <ImportIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await importForProject({
+          environmentId: importProjectRef.environmentId,
+          projectId: importProjectRef.projectId,
         });
       },
     });

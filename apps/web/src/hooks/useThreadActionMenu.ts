@@ -37,6 +37,7 @@ import {
 import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
 import { useUiStateStore } from "../uiStateStore";
 import { useCopyToClipboard } from "./useCopyToClipboard";
+import { useImportAgentThreads } from "./useImportAgentThreads";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
 import { useThreadActions } from "./useThreadActions";
@@ -95,6 +96,7 @@ export function useThreadActionMenu(input: {
     reportFailure: false,
   });
   const handleNewThread = useNewThreadHandler();
+  const { importForProject } = useImportAgentThreads();
   const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
@@ -194,6 +196,12 @@ export function useThreadActionMenu(input: {
           }
         };
         switch (action) {
+          case "import-agent-threads":
+            await importForProject({
+              environmentId: thread.environmentId,
+              projectId: thread.projectId,
+            });
+            return;
           case "project-settings": {
             const project = projects.find(
               (candidate) =>
@@ -342,6 +350,7 @@ export function useThreadActionMenu(input: {
       copyThreadIdToClipboard,
       deleteThread,
       handleNewThread,
+      importForProject,
       logicalProjectKeyByPhysicalKey,
       markThreadUnread,
       onStartRename,

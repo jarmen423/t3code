@@ -16,6 +16,8 @@ const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
 const hermesProfile = process.env.T3_ACP_HERMES === "1";
+const devinProfile = process.env.T3_ACP_DEVIN === "1";
+const museProfile = process.env.T3_ACP_MUSE === "1";
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
@@ -70,12 +72,23 @@ const permissionRequestCount = Math.max(
 );
 const sessionId = "mock-session-1";
 
-let currentModeId = antigravityProfile || hermesProfile ? "default" : "ask";
+let currentModeId =
+  antigravityProfile || hermesProfile
+    ? "default"
+    : devinProfile
+      ? "accept-edits"
+      : museProfile
+        ? "auto"
+        : "ask";
 let currentModelId = antigravityProfile
   ? "gemini-test-low"
   : hermesProfile
     ? "openrouter:mock-alpha"
-    : "default";
+    : devinProfile
+      ? "swe-1.5"
+      : museProfile
+        ? "muse-spark-1.3"
+        : "default";
 let parameterizedModelPicker = false;
 let currentReasoning = "medium";
 let currentContext = "272k";
@@ -138,6 +151,78 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
         type: "select",
         currentValue: currentModeId,
         options: availableModes.map((mode) => ({ value: mode.id, name: mode.name })),
+      },
+    ];
+  }
+  if (devinProfile) {
+    // Mirrors the real Devin ACP: mode + model select configOptions; model ids
+    // embed effort suffixes and fusion-* combos, no separate `models` field.
+    return [
+      {
+        id: "mode",
+        name: "Mode",
+        category: "mode",
+        type: "select",
+        currentValue: currentModeId,
+        options: availableModes.map((mode) => ({ value: mode.id, name: mode.name })),
+      },
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: currentModelId,
+        options: [
+          { value: "swe-1.5", name: "SWE 1.5" },
+          { value: "swe-1.5-high", name: "SWE 1.5 (High)" },
+          { value: "claude-sonnet-4-6-high", name: "Claude Sonnet 4.6 (High)" },
+          { value: "gpt-5.4-high", name: "GPT-5.4 (High)" },
+          { value: "fusion-sonnet", name: "Fusion Sonnet" },
+        ],
+      },
+    ];
+  }
+  if (museProfile) {
+    // Mirrors the real muse-acp-bridge: mode + model + reasoning_effort
+    // configOptions; no `models` field on session/new.
+    return [
+      {
+        id: "mode",
+        name: "Mode",
+        category: "mode",
+        type: "select",
+        currentValue: currentModeId,
+        options: availableModes.map((mode) => ({ value: mode.id, name: mode.name })),
+      },
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: currentModelId,
+        options: [
+          { value: "muse-spark-1.3", name: "Muse Spark 1.3" },
+          { value: "muse-spark-1.3-contributor", name: "Muse Spark 1.3 Contributor" },
+          { value: "muse-spark-1.2", name: "Muse Spark 1.2" },
+          { value: "muse-spark-1.2-contributor", name: "Muse Spark 1.2 Contributor" },
+        ],
+      },
+      {
+        id: "reasoning_effort",
+        name: "Reasoning Effort",
+        category: "thought_level",
+        type: "select",
+        currentValue: currentReasoning,
+        options: [
+          { value: "none", name: "None" },
+          { value: "minimal", name: "Minimal" },
+          { value: "low", name: "Low" },
+          { value: "medium", name: "Medium" },
+          { value: "high", name: "High" },
+          { value: "xhigh", name: "Extra High" },
+          { value: "max", name: "Max" },
+          { value: "ultra", name: "Ultra" },
+        ],
       },
     ];
   }
@@ -324,23 +409,38 @@ const availableModes: ReadonlyArray<AcpSchema.SessionMode> = antigravityProfile
         { id: "accept_edits", name: "Accept edits" },
         { id: "dont_ask", name: "Don't ask" },
       ]
-    : [
-        {
-          id: "ask",
-          name: "Ask",
-          description: "Request permission before making any changes",
-        },
-        {
-          id: "architect",
-          name: "Architect",
-          description: "Design and plan software systems without implementation",
-        },
-        {
-          id: "code",
-          name: "Code",
-          description: "Write and modify code with full tool access",
-        },
-      ];
+    : devinProfile
+      ? [
+          { id: "accept-edits", name: "Code" },
+          { id: "smart", name: "Smart" },
+          { id: "ask", name: "Ask" },
+          { id: "plan", name: "Plan" },
+          { id: "bypass", name: "Bypass" },
+        ]
+      : museProfile
+        ? [
+            { id: "ask", name: "Ask" },
+            { id: "auto", name: "Auto" },
+            { id: "yolo", name: "Yolo" },
+            { id: "deny", name: "Deny" },
+          ]
+        : [
+            {
+              id: "ask",
+              name: "Ask",
+              description: "Request permission before making any changes",
+            },
+            {
+              id: "architect",
+              name: "Architect",
+              description: "Design and plan software systems without implementation",
+            },
+            {
+              id: "code",
+              name: "Code",
+              description: "Write and modify code with full tool access",
+            },
+          ];
 
 function modeState(): AcpSchema.SessionModeState {
   return {
@@ -369,9 +469,14 @@ const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
   { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
 ];
 
-function modelState(): AcpSchema.SessionModelState {
+function modelState(): AcpSchema.SessionModelState | null {
   if (antigravityProfile) {
     return { currentModelId, availableModels: antigravityModels };
+  }
+  // Devin and Muse advertise models through configOptions only, matching the
+  // real agents — session/new carries no `models` field for them.
+  if (devinProfile || museProfile) {
+    return null;
   }
   if (hermesProfile) {
     const modelId = hermesModels.some((model) => model.modelId === currentModelId)
@@ -393,17 +498,44 @@ const program = Effect.gen(function* () {
   const resumeRelease = yield* Deferred.make<void>();
   const nativeCancelRequested = yield* Deferred.make<void>();
   const nativeCancelRelease = yield* Deferred.make<void>();
-  const publishAntigravityCommands = (targetSessionId: string) =>
-    agent.client.sessionUpdate({
-      sessionId: targetSessionId,
-      update: {
-        sessionUpdate: "available_commands_update",
-        availableCommands: [
+  const publishAdvertisedCommands = (targetSessionId: string) => {
+    const availableCommands = antigravityProfile
+      ? [
           { name: "plan", description: "Plan a task", input: { hint: "task" } },
           { name: "logout", description: "Sign out" },
-        ],
-      },
+        ]
+      : devinProfile
+        ? [
+            { name: "code", description: "Code mode" },
+            { name: "smart", description: "Smart mode" },
+            { name: "ask", description: "Ask mode" },
+            { name: "plan", description: "Plan mode" },
+            { name: "bypass", description: "Bypass approvals" },
+            { name: "compact", description: "Compact the session" },
+          ]
+        : museProfile
+          ? [
+              { name: "help", description: "Show help" },
+              { name: "status", description: "Show session status" },
+              { name: "usage", description: "Show usage" },
+              { name: "models", description: "List models" },
+              { name: "effort", description: "Set reasoning effort" },
+              { name: "tasks", description: "List tasks" },
+              { name: "subagents", description: "List subagents" },
+              { name: "workflows", description: "List workflows" },
+              { name: "recap", description: "Recap the session" },
+              { name: "compact", description: "Compact the session" },
+              { name: "stop", description: "Stop the current turn" },
+            ]
+          : [];
+    if (availableCommands.length === 0) {
+      return Effect.void;
+    }
+    return agent.client.sessionUpdate({
+      sessionId: targetSessionId,
+      update: { sessionUpdate: "available_commands_update", availableCommands },
     });
+  };
 
   yield* agent.handleInitialize((request) =>
     Effect.gen(function* () {
@@ -447,6 +579,39 @@ const program = Effect.gen(function* () {
           authMethods,
         };
       }
+      if (devinProfile) {
+        // Mirrors the real `devin acp` initialize payload.
+        return {
+          protocolVersion: 1,
+          agentInfo: { name: "affogato", title: "Devin Agent", version: "0.0.0-dev" },
+          agentCapabilities: {
+            loadSession: true,
+            promptCapabilities: { image: true, embeddedContext: true },
+            sessionCapabilities: { list: {} },
+          },
+          authMethods: [{ id: "devin-browser", name: "Log in with browser" }],
+          _meta: {
+            "cognition.ai/sessionRename": true,
+            "cognition.ai/userEdits": true,
+            "cognition.ai/terminalLifecycle": true,
+            "cognition.ai/megaplan": true,
+          },
+        };
+      }
+      if (museProfile) {
+        // Mirrors the real muse-acp-bridge initialize payload: auth lives
+        // host-side (`muse login`), so no authMethods are advertised.
+        return {
+          protocolVersion: 1,
+          agentInfo: { name: "muse-acp-bridge", title: "Muse ACP Bridge", version: "0.1.0" },
+          agentCapabilities: {
+            loadSession: true,
+            promptCapabilities: { image: true, embeddedContext: true },
+            sessionCapabilities: { close: {}, fork: {}, list: {}, resume: {} },
+          },
+          authMethods: [],
+        };
+      }
       return {
         protocolVersion: 1,
         agentCapabilities: { loadSession: true, sessionCapabilities: { resume: {} } },
@@ -460,23 +625,35 @@ const program = Effect.gen(function* () {
   // Mirrors the real agent: the API key method reads GEMINI_API_KEY from the
   // process environment and rejects when it is missing.
   yield* agent.handleAuthenticate((request) =>
-    hermesProfile
-      ? request.methodId === "hermes-setup"
-        ? Effect.fail(
+    devinProfile
+      ? request.methodId === "devin-browser"
+        ? Effect.succeed({})
+        : Effect.fail(
             AcpError.AcpRequestError.invalidParams(
-              "hermes-setup is a terminal flow; it cannot be completed over ACP.",
+              `Mock Devin rejected auth method ${request.methodId}.`,
             ),
           )
-        : Effect.succeed({})
-      : !antigravityProfile || request.methodId === "oauth-personal"
-        ? Effect.succeed({})
-        : request.methodId === "gemini-api-key" && process.env.GEMINI_API_KEY
-          ? Effect.succeed({})
-          : Effect.fail(
-              AcpError.AcpRequestError.invalidParams(
-                `Mock Antigravity rejected auth method ${request.methodId}.`,
-              ),
-            ),
+      : museProfile
+        ? Effect.fail(
+            AcpError.AcpRequestError.invalidParams("muse-acp-bridge advertises no auth methods."),
+          )
+        : hermesProfile
+          ? request.methodId === "hermes-setup"
+            ? Effect.fail(
+                AcpError.AcpRequestError.invalidParams(
+                  "hermes-setup is a terminal flow; it cannot be completed over ACP.",
+                ),
+              )
+            : Effect.succeed({})
+          : !antigravityProfile || request.methodId === "oauth-personal"
+            ? Effect.succeed({})
+            : request.methodId === "gemini-api-key" && process.env.GEMINI_API_KEY
+              ? Effect.succeed({})
+              : Effect.fail(
+                  AcpError.AcpRequestError.invalidParams(
+                    `Mock Antigravity rejected auth method ${request.methodId}.`,
+                  ),
+                ),
   );
   if (antigravityProfile) {
     yield* agent.handleLogout(() => Effect.succeed({}));
@@ -484,9 +661,7 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleCreateSession(() =>
     Effect.gen(function* () {
-      if (antigravityProfile) {
-        yield* publishAntigravityCommands(sessionId);
-      }
+      yield* publishAdvertisedCommands(sessionId);
       return {
         sessionId,
         modes: modeState(),
@@ -508,9 +683,7 @@ const program = Effect.gen(function* () {
       if (waitForResumeRelease) {
         yield* Deferred.await(resumeRelease);
       }
-      if (antigravityProfile) {
-        yield* publishAntigravityCommands(request.sessionId);
-      }
+      yield* publishAdvertisedCommands(request.sessionId);
       return {
         modes: modeState(),
         models: modelState(),
@@ -584,7 +757,7 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleSetSessionModel((request) =>
     Effect.gen(function* () {
-      if (!modelState().availableModels.some((model) => model.modelId === request.modelId)) {
+      if (!modelState()?.availableModels?.some((model) => model.modelId === request.modelId)) {
         return yield* AcpError.AcpRequestError.invalidParams(
           `Unknown mock model id: ${request.modelId}`,
           {
@@ -620,7 +793,10 @@ const program = Effect.gen(function* () {
       if (request.configId === "model" && typeof request.value === "string") {
         currentModelId = request.value;
       }
-      if (request.configId === "reasoning" && typeof request.value === "string") {
+      if (
+        (request.configId === "reasoning" || request.configId === "reasoning_effort") &&
+        typeof request.value === "string"
+      ) {
         currentReasoning = request.value;
       }
       if (request.configId === "context" && typeof request.value === "string") {

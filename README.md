@@ -2,9 +2,10 @@
 
 > [!NOTE]
 > **Community fork** tracking [pingdotgg/t3code](https://github.com/pingdotgg/t3code). This fork adds
-> **[Hermes Agent](https://hermes-agent.nousresearch.com) as an ACP provider** — full configured
-> model catalog in the picker, Hermes slash commands (`/model`, `/compress`, `/steer`, `/queue`, …),
-> and Hermes approval modes.
+> **[Hermes Agent](https://hermes-agent.nousresearch.com), [Devin](https://docs.devin.ai/cli), and
+> [Muse Code](https://meta-models.github.io/muse-code-sdk/) as ACP providers** — configured model
+> catalogs in the picker, provider slash commands, native approval modes, and Muse's interactive
+> questions with free-form answers.
 >
 > Unsigned Windows, Linux, and `t3` CLI builds: **[Releases](https://github.com/jarmen423/t3code/releases)**
 
