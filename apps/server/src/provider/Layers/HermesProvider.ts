@@ -216,8 +216,9 @@ function defaultHermesModelCapabilities(
   native: ReadonlyArray<ServerProviderModel>,
 ): ModelCapabilities {
   const current = native.find((model) => model.isDefault) ?? native[0];
-  if (current && (current.capabilities.optionDescriptors?.length ?? 0) > 0) {
-    return current.capabilities;
+  const descriptors = current?.capabilities?.optionDescriptors ?? [];
+  if (descriptors.length > 0) {
+    return createModelCapabilities({ optionDescriptors: descriptors });
   }
   // A current native with empty descriptors opted out via supportsReasoningEffort: false.
   return current

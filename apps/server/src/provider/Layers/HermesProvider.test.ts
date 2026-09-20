@@ -144,7 +144,7 @@ describe("buildHermesModelsFromSession", () => {
       HERMES_DEFAULT_MODEL_SLUG,
     ]);
     expect(
-      buildHermesModelsFromSession(undefined, undefined)[0]?.capabilities.optionDescriptors,
+      buildHermesModelsFromSession(undefined, undefined)[0]?.capabilities?.optionDescriptors,
     ).toEqual([FALLBACK_REASONING_DESCRIPTOR]);
   });
 
@@ -234,9 +234,9 @@ describe("buildHermesModelsFromSession", () => {
     // The product slug stays selected in the composer, so it copies the current
     // native model's advertised ladder. Models that omit _meta still get the
     // fallback none..ultra control.
-    expect(models[0]?.capabilities.optionDescriptors).toEqual(advertised);
-    expect(models[1]?.capabilities.optionDescriptors).toEqual(advertised);
-    expect(models[2]?.capabilities.optionDescriptors).toEqual([FALLBACK_REASONING_DESCRIPTOR]);
+    expect(models[0]?.capabilities?.optionDescriptors).toEqual(advertised);
+    expect(models[1]?.capabilities?.optionDescriptors).toEqual(advertised);
+    expect(models[2]?.capabilities?.optionDescriptors).toEqual([FALLBACK_REASONING_DESCRIPTOR]);
   });
 
   it("ignores malformed effort entries and an unsupported flag", () => {
@@ -270,7 +270,7 @@ describe("buildHermesModelsFromSession", () => {
       },
       [],
     );
-    expect(models[1]?.capabilities.optionDescriptors).toEqual([
+    expect(models[1]?.capabilities?.optionDescriptors).toEqual([
       {
         id: "reasoningEffort",
         label: "Reasoning",
@@ -278,10 +278,10 @@ describe("buildHermesModelsFromSession", () => {
         options: [{ id: "low", label: "Low" }],
       },
     ]);
-    expect(models[0]?.capabilities.optionDescriptors).toEqual(
-      models[1]?.capabilities.optionDescriptors,
+    expect(models[0]?.capabilities?.optionDescriptors).toEqual(
+      models[1]?.capabilities?.optionDescriptors,
     );
-    expect(models[2]?.capabilities.optionDescriptors).toEqual([]);
+    expect(models[2]?.capabilities?.optionDescriptors).toEqual([]);
   });
 
   it("hides reasoning on the product slug when the current model opts out", () => {
@@ -301,8 +301,8 @@ describe("buildHermesModelsFromSession", () => {
       },
       [],
     );
-    expect(models[0]?.capabilities.optionDescriptors).toEqual([]);
-    expect(models[1]?.capabilities.optionDescriptors).toEqual([]);
+    expect(models[0]?.capabilities?.optionDescriptors).toEqual([]);
+    expect(models[1]?.capabilities?.optionDescriptors).toEqual([]);
   });
 });
 
