@@ -58,11 +58,14 @@ describe("buildMuseAcpSpawnInput", () => {
 });
 
 describe("musePermissionMode", () => {
-  it("maps T3 runtime modes onto Muse session modes", () => {
-    expect(musePermissionMode("full-access")).toBe("yolo");
-    expect(musePermissionMode("auto-accept-edits")).toBe("auto");
-    expect(musePermissionMode("auto")).toBe("auto");
+  it("gates every mode except Full access behind native ask", () => {
     expect(musePermissionMode("approval-required")).toBe("ask");
+    expect(musePermissionMode("auto-accept-edits")).toBe("ask");
+    expect(musePermissionMode("auto")).toBe("ask");
+  });
+
+  it("maps Full access to native auto, which still allows questions", () => {
+    expect(musePermissionMode("full-access")).toBe("auto");
   });
 });
 
@@ -89,7 +92,7 @@ describe("resolveMuseSessionModeId", () => {
         runtimeMode: "full-access",
         modeState: advertised(["ask", "auto", "yolo"]),
       }),
-    ).toBe("yolo");
+    ).toBe("auto");
     expect(
       resolveMuseSessionModeId({
         interactionMode: "default",
@@ -99,8 +102,9 @@ describe("resolveMuseSessionModeId", () => {
     ).toBe("ask");
   });
 
-  it("falls back to the most capable mode that is not more permissive", () => {
-    // A bridge without yolo should not get full-access silently downgraded to deny.
+  it("falls back to the strongest advertised mode that is not more permissive", () => {
+    // A bridge without yolo must not get full-access silently upgraded to it;
+    // auto is the strongest mode that still keeps questions available.
     expect(
       resolveMuseSessionModeId({
         interactionMode: undefined,
@@ -115,6 +119,51 @@ describe("resolveMuseSessionModeId", () => {
         modeState: advertised(["deny", "ask"]),
       }),
     ).toBe("ask");
+  });
+
+  it("fails closed instead of upgrading when only more permissive modes are advertised", () => {
+    const tooPermissive = (
+      runtimeMode: Parameters<typeof resolveMuseSessionModeId>[0]["runtimeMode"],
+    ) =>
+      resolveMuseSessionModeId({
+        interactionMode: undefined,
+        runtimeMode,
+        modeState: advertised(["auto", "yolo"]),
+      });
+    expect(tooPermissive("approval-required")).toBeUndefined();
+    expect(tooPermissive("auto-accept-edits")).toBeUndefined();
+    expect(tooPermissive("auto")).toBeUndefined();
+    expect(
+      resolveMuseSessionModeId({
+        interactionMode: "plan",
+        runtimeMode: "full-access",
+        modeState: advertised(["auto", "yolo"]),
+      }),
+    ).toBeUndefined();
+  });
+
+  it("fails closed when the bridge advertises only unknown mode ids", () => {
+    const unknownOnly = (
+      runtimeMode: Parameters<typeof resolveMuseSessionModeId>[0]["runtimeMode"],
+    ) =>
+      resolveMuseSessionModeId({
+        interactionMode: undefined,
+        runtimeMode,
+        modeState: advertised(["turbo"]),
+      });
+    expect(unknownOnly("approval-required")).toBeUndefined();
+    expect(unknownOnly("auto-accept-edits")).toBeUndefined();
+    expect(unknownOnly("auto")).toBeUndefined();
+    expect(unknownOnly("full-access")).toBeUndefined();
+    // Plan resolves to ask, but ask was never advertised either: an unreadable
+    // mode list must not resurrect the preferred mode out of thin air.
+    expect(
+      resolveMuseSessionModeId({
+        interactionMode: "plan",
+        runtimeMode: "full-access",
+        modeState: advertised(["turbo"]),
+      }),
+    ).toBeUndefined();
   });
 
   it("never invents modes when none are advertised", () => {

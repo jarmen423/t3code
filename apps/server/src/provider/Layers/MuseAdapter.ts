@@ -59,7 +59,10 @@ import {
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
-import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
+import {
+  parsePermissionRequest,
+  canonicalItemTypeFromAcpToolKind,
+} from "../acp/AcpRuntimeModel.ts";
 import {
   MUSE_ELICITATION_CANCEL_RESPONSE,
   MUSE_ELICITATION_CREATE_METHOD,
@@ -189,6 +192,17 @@ function selectAutoApprovedPermissionOption(
     selectMusePermissionOptionId(request, "acceptForSession") ??
     selectMusePermissionOptionId(request, "accept")
   );
+}
+
+/**
+ * Auto-accept edits approves only file-change requests (edit, delete, move)
+ * ahead of the user. Commands, reads, unknown tools, and elicitations keep
+ * asking — the mode must not widen into anything like native `auto`.
+ */
+function isAutoAcceptableMusePermissionRequest(
+  request: EffectAcpSchema.RequestPermissionRequest,
+): boolean {
+  return canonicalItemTypeFromAcpToolKind(request.toolCall.kind ?? undefined) === "file_change";
 }
 
 /** Only advertise decisions that the native request can honor. */
@@ -342,10 +356,18 @@ export const makeMuseAdapter = Effect.fn("makeMuseAdapter")(function* (
         ? stableStringify({ kind, title, command, input: rawInput, locations })
         : undefined;
 
-    if (
+    const autoApprove =
+      // Full access allows every tool; questions stay available and are only
+      // answered when the user chooses to.
       context.session.runtimeMode === "full-access" ||
-      (approvalKey !== undefined && context.sessionApprovedOperations.has(approvalKey))
-    ) {
+      // The user explicitly remembered this exact operation — honoring it is
+      // their choice, independent of the mode.
+      (approvalKey !== undefined && context.sessionApprovedOperations.has(approvalKey)) ||
+      // Auto-accept edits widens to file changes only: edit, delete, move.
+      // Commands, reads, unknown tools, and elicitations still ask.
+      (context.session.runtimeMode === "auto-accept-edits" &&
+        isAutoAcceptableMusePermissionRequest(request));
+    if (autoApprove) {
       const autoApprovedOptionId = selectAutoApprovedPermissionOption(request);
       if (autoApprovedOptionId !== undefined) {
         return {
@@ -605,13 +627,24 @@ export const makeMuseAdapter = Effect.fn("makeMuseAdapter")(function* (
             requestedReasoningEffort: requestedStartReasoningEffort,
             mapError: (cause) => cause,
           });
+          const resolvedModeId = resolveMuseSessionModeId({
+            interactionMode: undefined,
+            runtimeMode: input.runtimeMode,
+            modeState: yield* acp.getModeState,
+          });
+          if (resolvedModeId === undefined) {
+            // No advertised mode satisfies the requested authority: fail the
+            // start rather than leave the bridge's possibly-permissive mode.
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "startSession",
+              issue:
+                "The Muse bridge advertises no session mode that enforces the requested permission level. Grant the bridge narrower modes or choose a different permission mode.",
+            });
+          }
           yield* applyMuseAcpMode({
             runtime: acp,
-            modeId: resolveMuseSessionModeId({
-              interactionMode: undefined,
-              runtimeMode: input.runtimeMode,
-              modeState: yield* acp.getModeState,
-            }),
+            modeId: resolvedModeId,
             mapError: (cause) => cause,
           });
           yield* options.onSessionStarted?.(started) ?? Effect.void;
@@ -981,13 +1014,24 @@ export const makeMuseAdapter = Effect.fn("makeMuseAdapter")(function* (
                 payload: currentModelId !== undefined ? { model: currentModelId } : {},
               });
             }
+            const resolvedTurnModeId = resolveMuseSessionModeId({
+              interactionMode: input.interactionMode,
+              runtimeMode: context.session.runtimeMode,
+              modeState: yield* context.acp.getModeState,
+            });
+            if (resolvedTurnModeId === undefined) {
+              // No advertised mode satisfies the requested authority: fail the
+              // turn rather than leave the bridge's possibly-permissive mode.
+              return yield* new ProviderAdapterRequestError({
+                provider: PROVIDER,
+                method: "session/prompt",
+                detail:
+                  "The Muse bridge advertises no session mode that enforces the requested permission level.",
+              });
+            }
             yield* applyMuseAcpMode({
               runtime: context.acp,
-              modeId: resolveMuseSessionModeId({
-                interactionMode: input.interactionMode,
-                runtimeMode: context.session.runtimeMode,
-                modeState: yield* context.acp.getModeState,
-              }),
+              modeId: resolvedTurnModeId,
               mapError: (cause) => cause,
             });
             const selectedModel = input.modelSelection?.model.trim();

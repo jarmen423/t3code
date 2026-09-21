@@ -104,25 +104,18 @@ export const makeMuseAcpRuntime = (
   });
 
 /**
- * T3's fixed permission modes map onto Muse's session modes: `ask` gates
- * unmatched tools, `auto` allows tools, `yolo` additionally skips questions.
- * `deny` is never produced — no T3 mode asks to refuse work outright.
+ * T3's permission modes stay conservative on Muse: everything but Full access
+ * runs native `ask` so unmatched tools keep asking, and Full access runs
+ * `auto`, which allows tools while questions remain available. `yolo` is
+ * never selected — it also suppresses Muse's structured questions — and
+ * `deny` is never produced, since no T3 mode refuses work outright.
  */
 export function musePermissionMode(runtimeMode: RuntimeMode): string {
-  switch (runtimeMode) {
-    case "full-access":
-      return "yolo";
-    case "auto-accept-edits":
-    case "auto":
-      return "auto";
-    case "approval-required":
-      return "ask";
-  }
+  return runtimeMode === "full-access" ? "auto" : "ask";
 }
 
-// Restrictiveness ladder used when the preferred mode is not advertised:
-// pick the most capable mode that is not more permissive than requested,
-// else the most restrictive advertised mode.
+// Restrictiveness ladder over the native mode ids Muse is known to use.
+// Unknown future ids are never assumed to be safe substitutes.
 const MUSE_MODE_LADDER = ["deny", "ask", "auto", "yolo"] as const;
 
 function museModeRank(modeId: string): number {
@@ -130,32 +123,38 @@ function museModeRank(modeId: string): number {
 }
 
 /**
- * Resolves the native mode to apply for a turn. `interactionMode === "plan"`
- * degrades to `ask` — Muse has no plan mode, and gating every action is the
- * closest available behavior. Falls back along the restrictiveness ladder
- * when the preferred id is not advertised.
+ * Resolves the native mode to apply for a turn, or `undefined` when nothing
+ * advertised can enforce the requested authority. `interactionMode ===
+ * "plan"` prefers `ask` — Muse has no plan mode, and gating every action is
+ * the closest behavior. Without mode metadata or an advertised list the
+ * preferred mode is kept; with one, the preferred id wins when advertised,
+ * else the most permissive known mode that is not more permissive than
+ * requested. When every known advertised mode is more permissive (or only
+ * unknown ids are advertised), resolving to `undefined` fails the start or
+ * turn instead of widening authority.
  */
 export function resolveMuseSessionModeId(input: {
   readonly interactionMode: ProviderInteractionMode | undefined;
   readonly runtimeMode: RuntimeMode;
   readonly modeState: AcpSessionModeState | undefined;
-}): string {
+}): string | undefined {
   const preferred =
     input.interactionMode === "plan" ? "ask" : musePermissionMode(input.runtimeMode);
-  const advertised = (input.modeState?.availableModes ?? [])
-    .map((mode) => mode.id)
-    .filter((id) => museModeRank(id) >= 0);
-  if (advertised.length === 0 || advertised.includes(preferred)) {
+  const advertised = input.modeState?.availableModes ?? [];
+  if (advertised.length === 0) {
+    return preferred;
+  }
+  if (advertised.some((mode) => mode.id === preferred)) {
     return preferred;
   }
   const preferredRank = museModeRank(preferred);
-  const notMorePermissive = advertised
-    .filter((id) => museModeRank(id) <= preferredRank)
-    .sort((a, b) => museModeRank(b) - museModeRank(a));
-  if (notMorePermissive[0] !== undefined) {
-    return notMorePermissive[0];
-  }
-  return advertised.sort((a, b) => museModeRank(a) - museModeRank(b))[0] ?? preferred;
+  return advertised
+    .map((mode) => mode.id)
+    .filter((id) => {
+      const rank = museModeRank(id);
+      return rank >= 0 && rank <= preferredRank;
+    })
+    .sort((a, b) => museModeRank(b) - museModeRank(a))[0];
 }
 
 /**

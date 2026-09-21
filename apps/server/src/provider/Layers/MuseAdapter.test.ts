@@ -56,6 +56,9 @@ const decodeRequestLog = (lines: ReadonlyArray<string>) =>
     }),
   );
 
+/** Re-decodes only the log lines appended after a previous read. */
+const allLinesFrom = (offset: number, lines: ReadonlyArray<string>) => lines.slice(offset);
+
 const nativeModes = [
   { id: "ask", name: "Ask" },
   { id: "auto", name: "Auto" },
@@ -111,6 +114,7 @@ const makeHarness = Effect.fn("makeMuseAdapterHarness")(function* (options?: {
   readonly enabled?: boolean;
   readonly holdCancel?: boolean;
   readonly onAuthRequired?: Effect.Effect<void>;
+  readonly modes?: ReadonlyArray<{ id: string; name: string }>;
 }) {
   const runtimeEvents = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
   const canonicalEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
@@ -129,7 +133,7 @@ const makeHarness = Effect.fn("makeMuseAdapterHarness")(function* (options?: {
   let active: NativePrompt | undefined;
   const modeState = yield* Ref.make({
     currentModeId: "auto",
-    availableModes: nativeModes,
+    availableModes: options?.modes ?? nativeModes,
   });
   let permissionHandler:
     | ((
@@ -330,6 +334,11 @@ const makeHarness = Effect.fn("makeMuseAdapterHarness")(function* (options?: {
     nextCancellation: Queue.take(cancellations),
     drainEvents,
     hasActivePrompt: () => active !== undefined,
+    setModes: (modes: ReadonlyArray<{ id: string; name: string }>, currentModeId?: string) =>
+      Ref.set(modeState, {
+        currentModeId: currentModeId ?? modes[0]?.id ?? "ask",
+        availableModes: modes,
+      }),
   };
 });
 
@@ -350,7 +359,9 @@ it.layer(layer)("MuseAdapter", (it) => {
       expect(session.model).toBe(nativeAlternative);
       // Mode and model both flow through session/set_config_option-backed
       // runtime calls; the bridge has no session/set_mode or session/set_model.
-      expect(h.calls).toEqual(["start", `model:${nativeAlternative}`, "mode:yolo"]);
+      // Full access selects native auto, which the session already has —
+      // so only the model write reaches the bridge.
+      expect(h.calls).toEqual(["start", `model:${nativeAlternative}`]);
       const sending = yield* h.adapter
         .sendTurn({ threadId, input: "Say hi" })
         .pipe(Effect.forkChild);
@@ -380,10 +391,10 @@ it.layer(layer)("MuseAdapter", (it) => {
         runtimeMode: "auto",
         modelSelection: { instanceId, model: "default" },
       });
-      // The picker's slug stays on session.model; it never reaches the wire,
-      // and mode auto is already active.
+      // The picker's slug stays on session.model; it never reaches the wire.
+      // T3 Auto runs native ask, so the fresh session's auto is corrected.
       expect(session.model).toBe("default");
-      expect(h.calls).toEqual(["start"]);
+      expect(h.calls).toEqual(["start", "mode:ask"]);
 
       const native = yield* h.adapter.startSession({
         threadId: ThreadId.make("muse-thread-native"),
@@ -392,7 +403,9 @@ it.layer(layer)("MuseAdapter", (it) => {
         modelSelection: { instanceId, model: nativeAlternative },
       });
       expect(native.model).toBe(nativeAlternative);
-      expect(h.calls).toEqual(["start", "start", `model:${nativeAlternative}`]);
+      // Second session: T3 Auto again, and the mode is already ask, so no
+      // second mode write — only the model selection reaches the bridge.
+      expect(h.calls).toEqual(["start", "mode:ask", "start", `model:${nativeAlternative}`]);
     }),
   );
 
@@ -413,8 +426,8 @@ it.layer(layer)("MuseAdapter", (it) => {
         "start",
         `model:${nativeAlternative}`,
         "config:reasoning_effort=high",
+        "mode:ask",
       ]);
-
       const turn = yield* h.adapter
         .sendTurn({
           threadId,
@@ -432,6 +445,7 @@ it.layer(layer)("MuseAdapter", (it) => {
         "start",
         `model:${nativeAlternative}`,
         "config:reasoning_effort=high",
+        "mode:ask",
         "config:reasoning_effort=ultra",
         "prompt:1",
       ]);
@@ -454,7 +468,8 @@ it.layer(layer)("MuseAdapter", (it) => {
           options: [{ id: "reasoningEffort", value: "bogus value!" }],
         },
       });
-      expect(h.calls).toEqual(["start"]);
+      // T3 Auto runs native ask, which differs from the fresh session's auto.
+      expect(h.calls).toEqual(["start", "mode:ask"]);
     }),
   );
 
@@ -476,6 +491,9 @@ it.layer(layer)("MuseAdapter", (it) => {
       expect(resumed.resumeCursor).toMatchObject({ sessionId: nativeSessionId });
       expect(h.launches.at(-1)?.resumeSessionId).toBe(nativeSessionId);
       expect(h.launches.at(-1)?.resumeMethod).toBe("resume");
+      // Both sessions run T3 Auto: the first corrected auto→ask, and on the
+      // resume the mode is already ask, so nothing further is written.
+      expect(h.calls.slice(-1)).toEqual(["start"]);
     }),
   );
 
@@ -612,6 +630,85 @@ it.layer(layer)("MuseAdapter", (it) => {
     }),
   );
 
+  it.effect(
+    "fails start or turn instead of upgrading when only permissive modes are advertised",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({
+          modes: [
+            { id: "auto", name: "Auto" },
+            { id: "yolo", name: "Yolo" },
+          ],
+        });
+        // Supervised maps to ask, which the bridge does not advertise: the
+        // start must fail rather than run in the bridge's default mode.
+        const start = yield* h.adapter
+          .startSession({
+            threadId,
+            cwd: process.cwd(),
+            runtimeMode: "approval-required",
+          })
+          .pipe(Effect.flip);
+        expect(start._tag).toBe("ProviderAdapterValidationError");
+        // The stub's start push lands before mode resolution; the point is
+        // that no mode write reaches the bridge and the start fails.
+        expect(h.calls).toEqual(["start"]);
+        // The failure lands after the runtime was created, so its scope must
+        // be closed and no session context stored: nothing leaks.
+        expect(h.controls.closed).toBe(1);
+        expect(yield* h.adapter.hasSession(threadId)).toBe(false);
+        // Same contract at turn time: a Supervised session whose bridge stops
+        // advertising ask must fail the next turn instead of running in auto.
+        const supervised = yield* makeHarness();
+        yield* supervised.adapter.startSession({
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "approval-required",
+        });
+        yield* supervised.setModes([{ id: "auto", name: "Auto" }]);
+        const turn = yield* supervised.adapter
+          .sendTurn({ threadId, input: "Keep working" })
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(turn)).toBe(true);
+        expect(supervised.calls).not.toContain("mode:auto");
+      }),
+  );
+
+  it.effect("fails start and turn visibly when the bridge advertises only unknown mode ids", () =>
+    Effect.gen(function* () {
+      const unknownOnly = [{ id: "turbo", name: "Turbo" }];
+      const h = yield* makeHarness({ modes: unknownOnly });
+      const start = yield* h.adapter
+        .startSession({
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "approval-required",
+        })
+        .pipe(Effect.flip);
+      expect(start._tag).toBe("ProviderAdapterValidationError");
+      // Fail closed before any prompt or mode write: the start must not
+      // dispatch work into an unverifiable, possibly-permissive mode.
+      expect(h.calls).toEqual(["start"]);
+      // Same contract at turn time: a Supervised session whose bridge stops
+      // advertising any known mode must fail the next turn, sending neither
+      // a mode write nor a prompt.
+      const supervised = yield* makeHarness();
+      yield* supervised.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      yield* supervised.setModes(unknownOnly);
+      const turn = yield* supervised.adapter
+        .sendTurn({ threadId, input: "Keep working" })
+        .pipe(Effect.exit);
+      expect(Exit.isFailure(turn)).toBe(true);
+      // Nothing new reaches the bridge for the failed turn: no prompt, no
+      // mode write (the mode:ask entry is start's legitimate correction).
+      expect(supervised.calls).toEqual(["start", "mode:ask"]);
+    }),
+  );
+
   it.effect("answers permission requests with the native option id", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
@@ -713,6 +810,70 @@ it.layer(layer)("MuseAdapter", (it) => {
         outcome: { outcome: "selected", optionId: "allow_always" },
       });
       expect(h.seen.some((event) => event.type === "request.opened")).toBe(false);
+    }),
+  );
+
+  it.effect("auto-accept-edits keeps native ask and approves only file-change requests", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        // The native session starts in `auto`; the adapter must switch it to
+        // `ask` so unmatched tools stay gated.
+        runtimeMode: "auto-accept-edits",
+      });
+      expect(h.calls).toContain("mode:ask");
+
+      const fileChangeOptions = [
+        { optionId: "allow_once", name: "Allow once", kind: "allow_once" },
+        { optionId: "allow_always", name: "Always allow", kind: "allow_always" },
+        { optionId: "reject", name: "Reject", kind: "reject_once" },
+      ] satisfies ReadonlyArray<AcpSchema.PermissionOption>;
+      const optionsFor = (kind: AcpSchema.ToolKind, toolCallId: string) =>
+        ({
+          sessionId: nativeSessionId,
+          toolCall: { toolCallId, kind, title: `Do ${kind}` },
+          options: fileChangeOptions,
+        }) satisfies AcpSchema.RequestPermissionRequest;
+
+      // Every file-change kind auto-approves through a native allow option.
+      for (const kind of ["edit", "delete", "move"] as const) {
+        const outcome = yield* h.invokePermission(optionsFor(kind, `call-file-${kind}`));
+        expect(outcome).toEqual({
+          outcome: { outcome: "selected", optionId: "allow_always" },
+        });
+      }
+      // Nothing surfaced to the user for the auto-approved file changes.
+      expect(h.seen.filter((event) => event.type === "request.opened")).toHaveLength(0);
+
+      // Commands must keep asking: the request stays pending for the user.
+      const command = yield* h
+        .invokePermission(optionsFor("execute", "call-exec-1"))
+        .pipe(Effect.forkChild);
+      const openedCommand = yield* h.waitForEvent((event) => event.type === "request.opened");
+      yield* h.adapter.respondToRequest(
+        threadId,
+        ApprovalRequestId.make(openedCommand.requestId!),
+        "accept",
+      );
+      expect(yield* Fiber.join(command)).toEqual({
+        outcome: { outcome: "selected", optionId: "allow_once" },
+      });
+
+      // Unknown tools must keep asking too.
+      const unknown = yield* h
+        .invokePermission(optionsFor("other", "call-unknown-1"))
+        .pipe(Effect.forkChild);
+      const openedUnknown = yield* h.waitForEvent((event) => event.type === "request.opened");
+      yield* h.adapter.respondToRequest(
+        threadId,
+        ApprovalRequestId.make(openedUnknown.requestId!),
+        "accept",
+      );
+      expect(yield* Fiber.join(unknown)).toEqual({
+        outcome: { outcome: "selected", optionId: "allow_once" },
+      });
     }),
   );
 
@@ -1070,25 +1231,32 @@ it.layer(layer)("MuseAdapter", (it) => {
           configId: "reasoning_effort",
           value: "high",
         });
-        expect(configWrites).toContainEqual({
-          sessionId: "mock-session-1",
-          configId: "mode",
-          value: "yolo",
-        });
-        expect(requests.some((request) => request.method === "session/set_mode")).toBe(false);
-        expect(requests.some((request) => request.method === "session/set_model")).toBe(false);
-        expect(requests.some((request) => request.method === "authenticate")).toBe(false);
-        // Session resume carries the Muse session id back over the wire.
+        expect(configWrites).not.toContainEqual(expect.objectContaining({ configId: "mode" }));
+        // Full access already sits in native `auto` on a fresh session, so the
+        // redundant write is skipped; the resume leg stops the session in auto
+        // and restarts it as Supervised, which must land a mode=ask write.
         yield* adapter.stopSession(threadId);
         yield* adapter.startSession({
           threadId,
           cwd,
-          runtimeMode: "auto",
+          runtimeMode: "approval-required",
           resumeCursor: session.resumeCursor,
         });
         const laterLines = (yield* fileSystem.readFileString(requestLog)).trim().split("\n");
         const allRequests = yield* decodeRequestLog(laterLines);
         expect(allRequests.some((request) => request.method === "session/resume")).toBe(true);
+        const resumeRequests = yield* decodeRequestLog(allLinesFrom(lines.length, laterLines));
+        expect(
+          resumeRequests.some(
+            (request) =>
+              request.method === "session/set_config_option" &&
+              (request.params as { configId?: string }).configId === "mode" &&
+              (request.params as { value?: string }).value === "ask",
+          ),
+        ).toBe(true);
+        expect(requests.some((request) => request.method === "session/set_mode")).toBe(false);
+        expect(requests.some((request) => request.method === "session/set_model")).toBe(false);
+        expect(requests.some((request) => request.method === "authenticate")).toBe(false);
       }),
   );
 });

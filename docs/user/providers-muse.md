@@ -37,11 +37,25 @@ session.
 
 T3 Code's interaction modes map to Muse's session modes:
 
-| T3 Code mode            | Muse mode |
-| ----------------------- | --------- |
-| Supervised, Plan        | `ask`     |
-| Auto, Auto-accept edits | `auto`    |
-| Full access             | `yolo`    |
+| T3 Code mode      | Muse mode |
+| ----------------- | --------- |
+| Supervised, Plan  | `ask`     |
+| Auto              | `ask`     |
+| Auto-accept edits | `ask`     |
+| Full access       | `auto`    |
+
+T3 Code never selects Muse's `yolo` mode: it also suppresses Muse's structured
+questions, which permission modes are not meant to prevent. Auto-accept edits
+therefore runs the session in `ask` and answers only file-change approvals
+(edits, deletions, and moves) by itself — commands, reads, and anything Muse
+labels otherwise still ask, and structured questions are always surfaced. Full
+access runs in `auto`, which allows tools to proceed while questions stay
+available.
+
+If the bridge advertises no mode that can enforce the requested level (for
+example only `auto` and `yolo` while Supervised is requested), starting or
+continuing a turn fails instead of running with a more permissive mode than
+asked for.
 
 Tool approval prompts offer only the choices Muse actually supports for that
 action, and "allow for this session" is remembered per operation.
