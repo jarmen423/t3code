@@ -286,9 +286,11 @@ export const makeDevinProvider = Effect.fn("makeDevinProvider")(function* (
     const next = yield* SubscriptionRef.updateAndGet(metadata, (state) => {
       if (state.authRevision !== before.authRevision) return state;
       const { message: _previousMessage, ...draft } = state.draft;
+      // Decide from the auth this probe established, not the prior draft's:
+      // the first successful check starts from an `unknown` draft, and the
+      // "could not be determined" hint must not outlive its own answer.
       const message =
-        errorMessage ??
-        (state.draft.auth.status === "authenticated" ? undefined : AUTH_UNCHECKED_MESSAGE);
+        errorMessage ?? (auth?.status === "authenticated" ? undefined : AUTH_UNCHECKED_MESSAGE);
       return {
         ...state,
         draft: {
@@ -354,29 +356,52 @@ export const makeDevinProvider = Effect.fn("makeDevinProvider")(function* (
   const onSessionStarted = Effect.fn("DevinProvider.onSessionStarted")(function* (
     started: AcpSessionRuntimeStartResult,
   ) {
-    const supportsTextGeneration = yield* options.supportsTextGeneration;
     // A session starting does not prove credentials — session/new succeeds
-    // while logged out — so auth is re-probed rather than assumed. An
-    // unparseable probe keeps the last known state.
+    // while logged out — so auth is re-probed rather than assumed. A known
+    // unauthenticated probe publishes the same setup-required warning as
+    // `onAuthRequired`; a known authenticated probe publishes the normal ready
+    // state with the probed text-generation capability. An unknown probe says
+    // nothing new, so the whole last-known auth-dependent snapshot (auth,
+    // status, message, text generation) carries over coherently instead of
+    // being rebuilt around a preserved auth field alone.
     const freshAuthStatus = yield* options.probeAuthStatus;
+    const supportsTextGeneration = yield* options.supportsTextGeneration;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     yield* SubscriptionRef.update(metadata, (state) => {
-      const { message: _previousMessage, ...draft } = state.draft;
+      // Capture before stripping: an unknown re-probe re-publishes exactly
+      // this message, while a known one must not inherit it.
+      const { message: previousMessage, ...draft } = state.draft;
+      const preserve = freshAuthStatus === "unknown";
+      const setupRequired = freshAuthStatus === "unauthenticated";
       return {
         authRevision: state.authRevision + 1,
         draft: {
           ...draft,
           installed: true,
-          status: settings.enabled ? "ready" : "disabled",
+          status: settings.enabled
+            ? preserve
+              ? draft.status
+              : setupRequired
+                ? "warning"
+                : "ready"
+            : "disabled",
           version: started.initializeResult.agentInfo?.version || draft.version,
-          auth:
-            freshAuthStatus === "unknown" ? state.draft.auth : devinAuthFromStatus(freshAuthStatus),
+          ...(preserve ? {} : { auth: devinAuthFromStatus(freshAuthStatus) }),
           checkedAt: updatedAt,
           models: buildDevinModelsFromConfigOptions(
             started.sessionSetupResult.configOptions,
             settings.customModels,
           ),
-          supportsTextGeneration,
+          ...(preserve
+            ? {}
+            : { supportsTextGeneration: setupRequired ? false : supportsTextGeneration }),
+          ...(preserve
+            ? previousMessage
+              ? { message: previousMessage }
+              : {}
+            : setupRequired
+              ? { message: SETUP_MESSAGE }
+              : {}),
         },
       } satisfies DevinProviderState;
     });

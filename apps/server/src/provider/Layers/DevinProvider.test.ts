@@ -10,6 +10,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import type { AcpSessionRuntimeStartResult } from "../acp/AcpSessionRuntime.ts";
 import { DEVIN_DEFAULT_MODEL_SLUG, type DevinAuthStatus } from "../acp/DevinAcpSupport.ts";
 import {
   buildDevinModelsFromConfigOptions,
@@ -74,6 +75,18 @@ const probedCommands = [
   },
 ] satisfies ReadonlyArray<EffectAcpSchema.AvailableCommand>;
 
+const sessionSetupResult = {
+  sessionId: "session-1",
+  configOptions: probedConfigOptions,
+} satisfies EffectAcpSchema.NewSessionResponse;
+
+const started = {
+  sessionId: "session-1",
+  initializeResult,
+  sessionSetupResult,
+  modelConfigId: "model",
+} satisfies AcpSessionRuntimeStartResult;
+
 const testLayer = Layer.merge(
   Layer.mock(BackgroundPolicy.BackgroundPolicy)({
     shouldRunScopeWork: () => Effect.succeed(false),
@@ -83,24 +96,28 @@ const testLayer = Layer.merge(
 
 const makeProvider = Effect.fn("makeDevinProviderHarness")(function* (
   probeResult: Effect.Effect<DevinProbeResult, never>,
-  authStatus: DevinAuthStatus = "authenticated",
+  options: {
+    readonly authStatus?: DevinAuthStatus;
+    readonly enabled?: boolean;
+  } = {},
 ) {
   const probeArgs = yield* Ref.make<ReadonlyArray<boolean>>([]);
+  const authStatusRef = yield* Ref.make<DevinAuthStatus>(options.authStatus ?? "authenticated");
   // The build-time check runs on a forked fiber; the gate lets the test
   // subscribe to its publish before it can complete.
   const gate = yield* Deferred.make<void>();
-  const provider = yield* makeDevinProvider(decodeSettings({ enabled: true }), {
+  const provider = yield* makeDevinProvider(decodeSettings({ enabled: options.enabled ?? true }), {
     stampIdentity: (snapshot) => Effect.succeed({ ...snapshot, instanceId, driver }),
     probe: (includeSessionMetadata) =>
       Ref.update(probeArgs, (args) => [...args, includeSessionMetadata]).pipe(
         Effect.andThen(Deferred.await(gate)),
         Effect.andThen(probeResult),
       ),
-    probeAuthStatus: Effect.succeed(authStatus),
+    probeAuthStatus: Ref.get(authStatusRef),
     supportsTextGeneration: Effect.succeed(true),
   });
   const releases = Deferred.succeed(gate, undefined).pipe(Effect.asVoid);
-  return { provider, probeArgs, releases };
+  return { provider, probeArgs, authStatusRef, releases };
 });
 
 describe("devinSubProvider", () => {
@@ -252,6 +269,9 @@ describe("makeDevinProvider probe", () => {
         yield* pull;
         const snapshot = yield* provider.snapshot.getSnapshot;
         expect(snapshot.auth.status).toBe("authenticated");
+        // An authenticated check must clear the cold draft's unchecked hint —
+        // the onSessionStarted preserve path relies on a messageless ready.
+        expect(snapshot.message).toBeUndefined();
         expect(snapshot.models.map((model) => model.slug)).toEqual([DEVIN_DEFAULT_MODEL_SLUG]);
         yield* provider.snapshot.refresh;
         // Still cold — each check keeps asking until a session probe lands.
@@ -271,7 +291,7 @@ describe("makeDevinProvider probe", () => {
             configOptions: undefined,
             commands: undefined,
           }),
-          "unauthenticated",
+          { authStatus: "unauthenticated" },
         );
         const pull = yield* Stream.toPull(
           provider.snapshot.streamChanges.pipe(
@@ -287,5 +307,140 @@ describe("makeDevinProvider probe", () => {
         expect(snapshot.setup?.canAuthenticate).toBe(false);
       }),
     ).pipe(Effect.provide(testLayer)),
+  );
+});
+
+describe("makeDevinProvider onSessionStarted", () => {
+  it.effect("downgrades to setup-required when the auth re-probe finds no credentials", () =>
+    Effect.gen(function* () {
+      const { provider, releases } = yield* makeProvider(
+        Effect.succeed({
+          initialize: initializeResult,
+          authStatus: "authenticated",
+          version: "devin 3000.10.31",
+          configOptions: undefined,
+          commands: undefined,
+        }),
+        { authStatus: "unauthenticated" },
+      );
+      // The health check clears first; the session then starts while logged out.
+      const pull = yield* Stream.toPull(
+        provider.snapshot.streamChanges.pipe(Stream.filter((s) => s.status === "ready")),
+      );
+      yield* releases;
+      yield* pull;
+      yield* provider.onSessionStarted(started);
+      const snapshot = yield* provider.snapshot.getSnapshot;
+      expect(snapshot.auth).toEqual({ status: "unauthenticated" });
+      expect(snapshot.status).toBe("warning");
+      expect(snapshot.message).toContain("devin auth login");
+      expect(snapshot.supportsTextGeneration).toBe(false);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("keeps the last-known auth-dependent snapshot when the re-probe is unknown", () =>
+    Effect.gen(function* () {
+      const { provider, authStatusRef, releases } = yield* makeProvider(
+        Effect.succeed({
+          initialize: initializeResult,
+          authStatus: "unauthenticated",
+          version: "devin 3000.10.31",
+          configOptions: undefined,
+          commands: undefined,
+        }),
+        { authStatus: "unauthenticated" },
+      );
+      const pull = yield* Stream.toPull(
+        provider.snapshot.streamChanges.pipe(Stream.filter((s) => s.status === "warning")),
+      );
+      yield* releases;
+      yield* pull;
+      // The re-probe fails to read sign-in state instead of reporting it.
+      yield* Ref.set(authStatusRef, "unknown");
+      yield* provider.onSessionStarted(started);
+      const snapshot = yield* provider.snapshot.getSnapshot;
+      expect(snapshot.auth).toEqual({ status: "unauthenticated" });
+      expect(snapshot.status).toBe("warning");
+      expect(snapshot.message).toContain("devin auth login");
+      expect(snapshot.supportsTextGeneration).toBe(false);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("keeps ready with an unknown re-probe after a known authenticated snapshot", () =>
+    Effect.gen(function* () {
+      const { provider, authStatusRef, releases } = yield* makeProvider(
+        Effect.succeed({
+          initialize: initializeResult,
+          authStatus: "authenticated",
+          version: "devin 3000.10.31",
+          configOptions: undefined,
+          commands: undefined,
+        }),
+        { authStatus: "authenticated" },
+      );
+      const pull = yield* Stream.toPull(
+        provider.snapshot.streamChanges.pipe(Stream.filter((s) => s.status === "ready")),
+      );
+      yield* releases;
+      yield* pull;
+      yield* Ref.set(authStatusRef, "unknown");
+      yield* provider.onSessionStarted(started);
+      const snapshot = yield* provider.snapshot.getSnapshot;
+      expect(snapshot.auth).toEqual({
+        status: "authenticated",
+        type: "devin-cli",
+        label: "Devin CLI credentials",
+      });
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.message).toBeUndefined();
+      expect(snapshot.supportsTextGeneration).toBe(true);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("recovers to ready when a later re-probe finds credentials again", () =>
+    Effect.gen(function* () {
+      const { provider, authStatusRef, releases } = yield* makeProvider(
+        Effect.succeed({
+          initialize: initializeResult,
+          authStatus: "unauthenticated",
+          version: "devin 3000.10.31",
+          configOptions: undefined,
+          commands: undefined,
+        }),
+        { authStatus: "unauthenticated" },
+      );
+      const pull = yield* Stream.toPull(
+        provider.snapshot.streamChanges.pipe(Stream.filter((s) => s.status === "warning")),
+      );
+      yield* releases;
+      yield* pull;
+      yield* Ref.set(authStatusRef, "authenticated");
+      yield* provider.onSessionStarted(started);
+      const snapshot = yield* provider.snapshot.getSnapshot;
+      expect(snapshot.auth.status).toBe("authenticated");
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.message).toBeUndefined();
+      expect(snapshot.supportsTextGeneration).toBe(true);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("stays disabled when a session starts while the provider is disabled", () =>
+    Effect.gen(function* () {
+      const { provider } = yield* makeProvider(
+        Effect.succeed({
+          initialize: initializeResult,
+          authStatus: "authenticated",
+          version: "devin 3000.10.31",
+          configOptions: undefined,
+          commands: undefined,
+        }),
+        { authStatus: "unknown", enabled: false },
+      );
+      // No probe runs while disabled, so nothing gates this call.
+      yield* provider.onSessionStarted(started);
+      const snapshot = yield* provider.snapshot.getSnapshot;
+      expect(snapshot.status).toBe("disabled");
+      expect(snapshot.enabled).toBe(false);
+    }).pipe(Effect.provide(testLayer)),
   );
 });
