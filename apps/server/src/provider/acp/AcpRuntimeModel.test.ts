@@ -464,6 +464,192 @@ describe("AcpRuntimeModel", () => {
     expect(JSON.stringify(event).length).toBeLessThan(hugeText.length);
   });
 
+  it("bounds nested delegate_task progress summaries before persistence", () => {
+    const hugeSummary = "s".repeat(20_000);
+    const result = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "delegate-1",
+        status: "in_progress",
+        rawOutput: {
+          toolName: "delegate_task",
+          taskProgress: {
+            sequence: 1,
+            taskIndex: 0,
+            type: "thinking",
+            status: "running",
+            summary: hugeSummary,
+          },
+        },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    const event = result.events[0];
+    if (event?._tag !== "ToolCallUpdated") {
+      throw new Error("expected a ToolCallUpdated event");
+    }
+    const rawOutput = event.toolCall.data.rawOutput as {
+      readonly taskProgress: { readonly summary: string };
+    };
+    expect(rawOutput.taskProgress.summary).toBe("s".repeat(1_000));
+    expect(JSON.stringify(event)).not.toContain(hugeSummary);
+  });
+
+  it("emits each structured delegate_task progress sequence immediately", () => {
+    const state = (sequence: number): AcpToolCallState => ({
+      toolCallId: "delegate-1",
+      title: "Ran command",
+      status: "inProgress",
+      data: {
+        rawOutput: {
+          toolName: "delegate_task",
+          taskProgress: {
+            sequence,
+            taskIndex: 0,
+            type: "thinking",
+            status: "running",
+            summary: "Thinking",
+          },
+        },
+      },
+    });
+
+    expect(
+      decideToolCallUpdateEmission({
+        previous: state(1),
+        next: state(2),
+        lastEmittedDetailLength: 0,
+        skippedSinceEmit: 0,
+      }),
+    ).toEqual({ emit: true, skippedSinceEmit: 0 });
+  });
+
+  it("emits only on delegate_task sequence changes; identical replays coalesce", () => {
+    // The emission gate forces a frame through when its sequence DIFFERS from
+    // the previous state; a replayed identical sequence is swallowed here,
+    // which is safe because the tracker already recorded that sequence (its
+    // own monotonic check makes the replay a no-op either way).
+    const state = (sequence: number): AcpToolCallState => ({
+      toolCallId: "delegate-1",
+      status: "inProgress",
+      data: {
+        rawOutput: {
+          toolName: "delegate_task",
+          taskProgress: { sequence, taskIndex: 1, type: "thinking", summary: "s" },
+        },
+      },
+    });
+    expect(
+      decideToolCallUpdateEmission({
+        previous: state(3),
+        next: state(4),
+        lastEmittedDetailLength: 0,
+        skippedSinceEmit: 0,
+      }),
+    ).toEqual({ emit: true, skippedSinceEmit: 0 });
+    // A regressed/replayed sequence reaches the coalescer, not the tracker.
+    expect(
+      decideToolCallUpdateEmission({
+        previous: state(5),
+        next: state(2),
+        lastEmittedDetailLength: 0,
+        skippedSinceEmit: 0,
+      }),
+    ).toEqual({ emit: true, skippedSinceEmit: 0 });
+    expect(
+      decideToolCallUpdateEmission({
+        previous: state(5),
+        next: state(5),
+        lastEmittedDetailLength: 0,
+        skippedSinceEmit: 0,
+      }),
+    ).toEqual({ emit: false, skippedSinceEmit: 1 });
+  });
+
+  it("emits delegate_task progress through the production merge path with rawInput omitted", () => {
+    // Production shape end-to-end: tool_call seeds rawInput; every later
+    // tool_call_update delta omits it. The merged state the tracker sees must
+    // keep the frozen task list AND carry each new progress sequence, and each
+    // sequence change must force an emission despite the coalescer.
+    const created = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "delegate-1",
+        title: "delegate_task",
+        kind: "other",
+        status: "pending",
+        rawInput: {
+          toolName: "delegate_task",
+          tasks: [
+            { goal: "Review cancellation", role: "reviewer" },
+            { goal: "Check retry behavior" },
+          ],
+        },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    const createdEvent = created.events[0];
+    if (createdEvent?._tag !== "ToolCallUpdated") {
+      throw new Error("expected a ToolCallUpdated event");
+    }
+
+    const delta = (sequence: number, taskIndex: number) =>
+      parseSessionUpdateEvent({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "delegate-1",
+          status: "in_progress",
+          rawOutput: {
+            toolName: "delegate_task",
+            taskProgress: {
+              sequence,
+              taskIndex,
+              type: "thinking",
+              status: "running",
+              summary: `frame ${sequence}`,
+            },
+          },
+        },
+      } satisfies EffectAcpSchema.SessionNotification);
+
+    let previous: AcpToolCallState | undefined = createdEvent.toolCall;
+    let lastEmittedDetailLength: number | undefined = toolCallProgressLength(createdEvent.toolCall);
+    let skippedSinceEmit = 0;
+    const emissions: Array<AcpToolCallState> = [];
+    for (const sequence of [1, 2, 3]) {
+      const deltaEvent = delta(sequence, sequence - 1).events[0];
+      if (deltaEvent?._tag !== "ToolCallUpdated") {
+        throw new Error("expected a ToolCallUpdated event");
+      }
+      const merged = mergeToolCallState(previous, deltaEvent.toolCall);
+      const decision = decideToolCallUpdateEmission({
+        previous,
+        next: merged,
+        lastEmittedDetailLength,
+        skippedSinceEmit,
+      });
+      expect(decision.emit).toBe(true);
+      skippedSinceEmit = decision.skippedSinceEmit;
+      lastEmittedDetailLength = toolCallProgressLength(merged);
+      emissions.push(merged);
+      previous = merged;
+    }
+    // The frozen task list survives every merge; each frame's sequence is the
+    // latest, so the tracker's index mapping resolves against the real children.
+    const rawInput = (state: AcpToolCallState) => state.data.rawInput as { tasks: unknown[] };
+    expect(rawInput(emissions[0]!).tasks).toHaveLength(2);
+    const progressOf = (state: AcpToolCallState) =>
+      (
+        state.data.rawOutput as {
+          taskProgress: { sequence: number; taskIndex: number };
+        }
+      ).taskProgress;
+    expect(emissions.map((state) => progressOf(state).sequence)).toEqual([1, 2, 3]);
+    expect(emissions.map((state) => progressOf(state).taskIndex)).toEqual([0, 1, 2]);
+  });
+
   it("coalesces 1000 rapid cumulative tool_call_update notifications for a redrawing progress bar", () => {
     let previous: AcpToolCallState | undefined;
     let lastEmittedDetailLength: number | undefined;

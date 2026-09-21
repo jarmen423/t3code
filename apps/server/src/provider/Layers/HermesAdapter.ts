@@ -9,6 +9,7 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
   RuntimeRequestId,
+  RuntimeTaskId,
   type ThreadId,
   TurnId,
   type TurnCompletedPayload,
@@ -58,6 +59,10 @@ import {
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
+import {
+  HermesDelegationTracker,
+  type HermesDelegationLifecycle,
+} from "../acp/HermesDelegationTasks.ts";
 import {
   applyHermesAcpMode,
   applyHermesAcpModelSelection,
@@ -124,6 +129,7 @@ interface HermesSessionContext {
   readonly promptLock: Semaphore.Semaphore;
   readonly stopLock: Semaphore.Semaphore;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
+  readonly delegationTracker: HermesDelegationTracker;
   /**
    * Operations the user chose "always allow" for. Hermes only remembers
    * allow_always for tool permissions; edit approvals offer no such option, so
@@ -293,6 +299,80 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (
     }
   });
 
+  const emitDelegationLifecycle = Effect.fn("HermesAdapter.emitDelegationLifecycle")(function* (
+    context: HermesSessionContext,
+    lifecycle: HermesDelegationLifecycle,
+    turnId: TurnId,
+  ) {
+    const taskId = RuntimeTaskId.make(lifecycle.taskId);
+    const linkage = {
+      taskType: lifecycle.taskType,
+      toolUseId: lifecycle.toolUseId,
+      title: lifecycle.description,
+      ...(lifecycle.role ? { role: lifecycle.role } : {}),
+      ...(lifecycle.model ? { model: lifecycle.model } : {}),
+    };
+    const taskStamp = yield* stamp;
+    if (lifecycle.phase === "started") {
+      yield* emit({
+        type: "task.started",
+        ...taskStamp,
+        provider: PROVIDER,
+        threadId: context.threadId,
+        turnId,
+        payload: {
+          taskId,
+          description: lifecycle.description,
+          ...linkage,
+        },
+      });
+    } else if (lifecycle.phase === "progress") {
+      yield* emit({
+        type: "task.progress",
+        ...taskStamp,
+        provider: PROVIDER,
+        threadId: context.threadId,
+        turnId,
+        payload: {
+          taskId,
+          description: lifecycle.description,
+          status: "running",
+          ...(lifecycle.summary ? { summary: lifecycle.summary } : {}),
+          ...(lifecycle.lastToolName ? { lastToolName: lifecycle.lastToolName } : {}),
+          ...linkage,
+        },
+      });
+    } else {
+      yield* emit({
+        type: "task.completed",
+        ...taskStamp,
+        provider: PROVIDER,
+        threadId: context.threadId,
+        turnId,
+        payload: {
+          taskId,
+          status: lifecycle.status,
+          summary: lifecycle.summary ?? lifecycle.description,
+          ...linkage,
+        },
+      });
+    }
+  });
+
+  /**
+   * Settles every delegation run owned by a turn that is being torn down
+   * (interrupted, steered away, or stopped) so no child row survives as
+   * forever-running once its turn can no longer report it.
+   */
+  const settleTurnDelegations = Effect.fn("HermesAdapter.settleTurnDelegations")(function* (
+    context: HermesSessionContext,
+    turnId: TurnId,
+  ) {
+    for (const lifecycle of context.delegationTracker.settleTurn(turnId)) {
+      yield* emitDelegationLifecycle(context, lifecycle, turnId);
+    }
+  });
+
   const stopContext = (context: HermesSessionContext) =>
     context.stopLock
       .withPermit(
@@ -309,6 +389,11 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (
           }).pipe(Effect.ensuring(Scope.close(context.scope, Exit.void)));
           context.closed = true;
           if (sessions.get(context.threadId) === context) sessions.delete(context.threadId);
+          // The session is gone: park the active turn's delegations first so
+          // task.completed rows reach the stream before session.exited.
+          if (context.activeTurnId !== undefined) {
+            yield* settleTurnDelegations(context, context.activeTurnId);
+          }
           yield* emit({
             type: "session.exited",
             ...(yield* stamp),
@@ -566,6 +651,7 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (
             promptLock: yield* Semaphore.make(1),
             stopLock: yield* Semaphore.make(1),
             pendingApprovals: new Map(),
+            delegationTracker: new HermesDelegationTracker(),
             sessionApprovedOperations: new Set(),
             turns: [],
             session,
@@ -651,7 +737,7 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (
                       }),
                     );
                     return;
-                  case "ToolCallUpdated":
+                  case "ToolCallUpdated": {
                     yield* emit(
                       makeAcpToolCallEvent({
                         stamp: eventStamp,
@@ -662,7 +748,17 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (
                         rawPayload: event.rawPayload,
                       }),
                     );
+                    // Delegation rows carry the turn that owns the run so a
+                    // steer (the replacement turn) never inherits children
+                    // dispatched by the turn it replaced.
+                    for (const lifecycle of context.delegationTracker.update(
+                      event.toolCall,
+                      turnId,
+                    )) {
+                      yield* emitDelegationLifecycle(context, lifecycle, turnId);
+                    }
                     return;
+                  }
                   case "ContentDelta":
                     yield* emit(
                       makeAcpContentDeltaEvent({
@@ -816,6 +912,9 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (
           turn.settled = true;
           context.activeTurnId = undefined;
           context.promptFiber = undefined;
+          // The turn can no longer report its delegations: park unfinished
+          // children so they never render as running after the turn ended.
+          yield* settleTurnDelegations(context, turn.turnId);
           context.session = {
             ...context.session,
             status: payload.state === "failed" ? "error" : "ready",

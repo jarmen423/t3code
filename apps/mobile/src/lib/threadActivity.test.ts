@@ -3242,6 +3242,79 @@ describe("quiet timeline: nested agents", () => {
     ).toEqual(["turn-fold", "agent-spawn"]);
   });
 
+  it("folds a settled Hermes delegation into one agent-spawn card with member outcomes", () => {
+    const turnId = TurnId.make("turn-hermes-delegate");
+    const agent = (
+      id: string,
+      kind: "task.started" | "task.completed",
+      taskId: string,
+      status: string,
+      seconds: number,
+      extra: Record<string, unknown> = {},
+    ) =>
+      makeActivity({
+        id: EventId.make(id),
+        kind,
+        summary:
+          kind === "task.completed" && status === "stopped" ? "Task stopped" : "Task started",
+        createdAt: `2026-04-01T00:00:${String(seconds).padStart(2, "0")}.000Z`,
+        turnId,
+        payload: {
+          taskId,
+          agentKind: "agent",
+          taskType: "local_agent",
+          title: extra.title,
+          toolUseId: "delegate-1",
+          status,
+          ...extra,
+        },
+      });
+    const feed = buildThreadFeed(
+      makeThread({
+        id: ThreadId.make("thread-hermes-delegate"),
+        projectId: ProjectId.make("project-1"),
+        title: "Hermes delegation",
+        activities: [
+          agent("hd-start-0", "task.started", "hermes:delegate-1:0", "running", 1, {
+            title: "Review cancellation",
+            role: "reviewer",
+          }),
+          agent("hd-start-1", "task.started", "hermes:delegate-1:1", "running", 2, {
+            title: "Check retry behavior",
+          }),
+          agent("hd-done-0", "task.completed", "hermes:delegate-1:0", "completed", 3, {
+            title: "Review cancellation",
+            summary: "Cancellation review is correct",
+          }),
+          agent("hd-done-1", "task.completed", "hermes:delegate-1:1", "stopped", 4, {
+            title: "Check retry behavior",
+            summary: "Ended when the parent turn ended.",
+          }),
+        ],
+      }),
+    );
+    const rows = feed.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities.map((row) => row.id) : [],
+    );
+    // The launching delegate_task call has no tool row here; the batch card
+    // anchored on the first task.started is the whole story of the run.
+    expect(rows).toEqual(["hd-start-0"]);
+    const batch = feed.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    )[0]!;
+    expect(batch).toMatchObject({
+      createdAt: "2026-04-01T00:00:01.000Z",
+      workEntry: {
+        agentSpawn: {
+          workflowId: null,
+          agentTaskIds: ["hermes:delegate-1:0", "hermes:delegate-1:1"],
+        },
+      },
+    });
+    // A parked member surfaces as "stopped", not a clean success.
+    expect(batch.lifecycleStatus).toBe("stopped");
+  });
+
   it("presents a spawn batch as one card whose status line follows the newest member activity", () => {
     const turnId = TurnId.make("turn-spawn-card");
     const latestTurn = {

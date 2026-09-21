@@ -287,6 +287,7 @@ function extractToolCallCommand(rawInput: unknown, title: string | undefined): s
 // deltas routinely omit `kind`, so there is no reliable way to tell a redrawing terminal
 // from another tool here, and the end is the useful part of any live-growing output.
 const TOOL_CALL_CONTENT_MAX_CHARS = 8_000;
+const DELEGATION_PROGRESS_SUMMARY_MAX_CHARS = 1_000;
 const TOOL_CALL_CONTENT_TRUNCATION_MARKER = "[Earlier output truncated]\n\n";
 
 function boundToolCallOutputText(text: string): string {
@@ -313,6 +314,17 @@ function boundToolCallRawOutput(rawOutput: unknown): unknown {
     const value = rawOutput[field];
     if (typeof value === "string" && value.length > TOOL_CALL_CONTENT_MAX_CHARS) {
       bounded[field] = boundToolCallOutputText(value);
+      changed = true;
+    }
+  }
+  const taskProgress = rawOutput.taskProgress;
+  if (isRecord(taskProgress)) {
+    const summary = taskProgress.summary;
+    if (typeof summary === "string" && summary.length > DELEGATION_PROGRESS_SUMMARY_MAX_CHARS) {
+      bounded.taskProgress = {
+        ...taskProgress,
+        summary: summary.slice(0, DELEGATION_PROGRESS_SUMMARY_MAX_CHARS),
+      };
       changed = true;
     }
   }
@@ -642,11 +654,29 @@ export function toolCallProgressLength(state: AcpToolCallState): number {
   return Math.max(state.detail?.length ?? 0, contentChars, rawOutputChars);
 }
 
+function delegateTaskProgressSequence(state: AcpToolCallState): number | undefined {
+  const rawOutput = state.data.rawOutput;
+  if (!isRecord(rawOutput) || rawOutput.toolName !== "delegate_task") return undefined;
+  const progress = rawOutput.taskProgress;
+  if (!isRecord(progress)) return undefined;
+  const sequence = progress.sequence;
+  return typeof sequence === "number" && Number.isSafeInteger(sequence) && sequence >= 0
+    ? sequence
+    : undefined;
+}
+
 export function decideToolCallUpdateEmission(
   input: AcpToolCallEmitDecisionInput,
 ): AcpToolCallEmitDecision {
   const { previous, next, lastEmittedDetailLength, skippedSinceEmit } = input;
   if (next.status === "completed" || next.status === "failed") {
+    return { emit: true, skippedSinceEmit: 0 };
+  }
+  const nextDelegationSequence = delegateTaskProgressSequence(next);
+  if (
+    nextDelegationSequence !== undefined &&
+    nextDelegationSequence !== (previous ? delegateTaskProgressSequence(previous) : undefined)
+  ) {
     return { emit: true, skippedSinceEmit: 0 };
   }
   if (previous === undefined || previous.title !== next.title || previous.status !== next.status) {

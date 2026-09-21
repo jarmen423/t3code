@@ -38,6 +38,7 @@ const emitPlanThenHang = process.env.T3_ACP_EMIT_PLAN_THEN_HANG === "1";
 const emitActiveToolThenHang = process.env.T3_ACP_EMIT_ACTIVE_TOOL_THEN_HANG === "1";
 const emitGrokMonitorPostTurnPoll = process.env.T3_ACP_EMIT_GROK_MONITOR_POST_TURN_POLL === "1";
 const emitGrokBackgroundTaskStarted = process.env.T3_ACP_EMIT_GROK_BACKGROUND_TASK_STARTED === "1";
+const emitHermesDelegateTask = process.env.T3_ACP_EMIT_HERMES_DELEGATE_TASK === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const waitForResumeRelease = process.env.T3_ACP_WAIT_FOR_RESUME_RELEASE === "1";
 const completeFirstPromptOnCancel = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL === "1";
@@ -1129,6 +1130,111 @@ const program = Effect.gen(function* () {
           },
         });
         return yield* Effect.never;
+      }
+
+      if (emitHermesDelegateTask) {
+        // Mirrors Hermes' real delegate_task shape: one tool call whose
+        // rawInput carries the task list, a background dispatch notice, and
+        // per-child taskProgress frames inside later tool_call_update
+        // rawOutputs (rawInput omitted on those deltas).
+        const delegateCallId = "delegate-tool-1";
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: delegateCallId,
+            title: "delegate_task",
+            kind: "other",
+            status: "pending",
+            rawInput: {
+              toolName: "delegate_task",
+              tasks: [
+                { goal: "Review cancellation", role: "reviewer" },
+                { goal: "Check retry behavior", model: "openai/gpt-5" },
+              ],
+            },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: delegateCallId,
+            status: "in_progress",
+            rawOutput: {
+              toolName: "delegate_task",
+              lifecycle: { status: "dispatched", mode: "background" },
+            },
+          },
+        });
+        const progressFrames: Array<{
+          readonly sequence: number;
+          readonly taskIndex: number;
+          readonly type: string;
+          readonly status?: string;
+          readonly lastToolName?: string;
+          readonly summary: string;
+        }> = [
+          {
+            sequence: 1,
+            taskIndex: 1,
+            type: "tool.started",
+            status: "running",
+            lastToolName: "search_files",
+            summary: "Running search_files",
+          },
+          {
+            sequence: 2,
+            taskIndex: 1,
+            type: "thinking",
+            status: "running",
+            summary: "Thinking",
+          },
+          {
+            sequence: 3,
+            taskIndex: 1,
+            type: "completed",
+            status: "completed",
+            summary: "Retry behavior is correct",
+          },
+        ];
+        for (const frame of progressFrames) {
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: delegateCallId,
+              status: "in_progress",
+              rawOutput: { toolName: "delegate_task", taskProgress: frame },
+            },
+          });
+        }
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: delegateCallId,
+            status: "completed",
+            rawOutput: {
+              toolName: "delegate_task",
+              taskProgress: {
+                sequence: 4,
+                taskIndex: 0,
+                type: "completed",
+                status: "completed",
+                summary: "Cancellation review is correct",
+              },
+            },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Delegation finished." },
+          },
+        });
+        return { stopReason: "end_turn" };
       }
 
       if (emitGrokBackgroundTaskStarted) {

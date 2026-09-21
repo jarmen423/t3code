@@ -2353,6 +2353,84 @@ describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
     expect(entries).toHaveLength(0);
   });
 
+  it("folds a settled Hermes delegation into one CTA with per-child outcomes", () => {
+    // Post-ingestion shape of a steered-away Hermes delegation: both children
+    // share the spawn turn, child 0 completed normally, child 1 was parked
+    // ("stopped") when the parent turn ended. This mirrors the payload the
+    // Hermes adapter emits for hermes:<toolCallId>:<index> task ids.
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "task.started",
+        summary: "Task started",
+        tone: "info",
+        payload: {
+          taskId: "hermes:delegate-1:0",
+          taskType: "local_agent",
+          title: "Review cancellation",
+          role: "reviewer",
+          toolUseId: "delegate-1",
+        },
+        turnId: "turn-spawn",
+        sequence: 1,
+      }),
+      makeActivity({
+        kind: "task.started",
+        summary: "Task started",
+        tone: "info",
+        payload: {
+          taskId: "hermes:delegate-1:1",
+          taskType: "local_agent",
+          title: "Check retry behavior",
+          toolUseId: "delegate-1",
+        },
+        turnId: "turn-spawn",
+        sequence: 2,
+      }),
+      makeActivity({
+        kind: "task.completed",
+        summary: "Task completed",
+        tone: "info",
+        payload: {
+          taskId: "hermes:delegate-1:0",
+          taskType: "local_agent",
+          title: "Review cancellation",
+          toolUseId: "delegate-1",
+          status: "completed",
+          summary: "Cancellation review is correct",
+        },
+        turnId: "turn-spawn",
+        sequence: 3,
+      }),
+      makeActivity({
+        kind: "task.completed",
+        summary: "Task stopped",
+        tone: "info",
+        payload: {
+          taskId: "hermes:delegate-1:1",
+          taskType: "local_agent",
+          title: "Check retry behavior",
+          toolUseId: "delegate-1",
+          status: "stopped",
+          summary: "Ended when the parent turn ended.",
+        },
+        turnId: "turn-spawn",
+        sequence: 4,
+      }),
+    ]);
+    // One CTA row anchored at the spawn point; the launching tool call's own
+    // row is absorbed by its agent rows.
+    const spawnRows = entries.filter((entry) => entry.agentSpawn !== undefined);
+    expect(spawnRows).toHaveLength(1);
+    expect(spawnRows[0]!.agentSpawn!.workflowId).toBeNull();
+    expect(spawnRows[0]!.agentSpawn!.agentTaskIds).toEqual([
+      "hermes:delegate-1:0",
+      "hermes:delegate-1:1",
+    ]);
+    expect(spawnRows[0]!.turnId).toBe("turn-spawn");
+    // A batch with a stopped member is not reported as a clean success.
+    expect(spawnRows[0]!.toolLifecycleStatus).toBe("stopped");
+  });
+
   it("drops task.updated and tool.progress from the work log (fold input only)", () => {
     const entries = deriveWorkLogEntries([
       makeActivity({

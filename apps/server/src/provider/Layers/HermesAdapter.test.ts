@@ -60,12 +60,14 @@ interface NativePrompt {
 
 type Runtime = Effect.Success<ReturnType<NonNullable<HermesAdapterOptions["makeRuntime"]>>>;
 
-const makeHarness = Effect.fn("makeHermesAdapterHarness")(function* (options?: {
+interface HarnessOptions {
   readonly enabled?: boolean;
   readonly holdCancel?: boolean;
   readonly authMethods?: ReadonlyArray<AcpSchema.AuthMethod>;
   readonly onAuthRequired?: Effect.Effect<void>;
-}) {
+}
+
+const makeHarness = Effect.fn("makeHermesAdapterHarness")(function* (options?: HarnessOptions) {
   const runtimeEvents = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
   const canonicalEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const prompts = yield* Queue.unbounded<NativePrompt>();
@@ -333,6 +335,335 @@ it.layer(layer)("HermesAdapter", (it) => {
         status: "ready",
         activeTurnId: undefined,
         model: nativeAlternative,
+      });
+    }),
+  );
+
+  it.effect("projects Hermes delegate_task calls into child task lifecycle events", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "auto-accept-edits",
+      });
+      const sending = yield* h.adapter
+        .sendTurn({ threadId, input: "Delegate this review" })
+        .pipe(Effect.forkChild);
+      const prompt = yield* h.nextPrompt;
+      const started = yield* h.waitForEvent((event) => event.type === "turn.started");
+      const turnId = started.turnId;
+      // Production shape: the initial tool_call frame carries rawInput; the
+      // later tool_call_update deltas carry ONLY rawOutput taskProgress.
+      const baseToolCall = {
+        toolCallId: "delegate-1",
+        title: "Ran command",
+        kind: "execute",
+        data: {
+          rawInput: {
+            toolName: "delegate_task",
+            tasks: [
+              { goal: "Review cancellation", role: "reviewer" },
+              { goal: "Check retry behavior" },
+            ],
+          },
+        },
+      } as const;
+      const emitDelta = (status: "inProgress" | "completed", rawOutput: Record<string, unknown>) =>
+        h.emitNative({
+          _tag: "ToolCallUpdated",
+          toolCall: { toolCallId: "delegate-1", status, data: { rawOutput } },
+          rawPayload: {},
+        });
+      yield* h.emitNative({
+        _tag: "ToolCallUpdated",
+        toolCall: { ...baseToolCall, status: "pending" },
+        rawPayload: {},
+      });
+      yield* emitDelta("inProgress", {
+        toolName: "delegate_task",
+        lifecycle: { status: "dispatched", mode: "background" },
+      });
+      yield* emitDelta("inProgress", {
+        toolName: "delegate_task",
+        taskProgress: {
+          sequence: 1,
+          taskIndex: 1,
+          type: "tool.started",
+          status: "running",
+          lastToolName: "search_files",
+          summary: "Running search_files",
+        },
+      });
+      yield* emitDelta("inProgress", {
+        toolName: "delegate_task",
+        taskProgress: {
+          sequence: 2,
+          taskIndex: 1,
+          type: "thinking",
+          status: "running",
+          summary: "Thinking",
+        },
+      });
+      yield* emitDelta("inProgress", {
+        toolName: "delegate_task",
+        taskProgress: {
+          sequence: 3,
+          taskIndex: 1,
+          type: "completed",
+          status: "completed",
+          summary: "Retry behavior is correct",
+        },
+      });
+      yield* emitDelta("completed", {
+        toolName: "delegate_task",
+        taskProgress: {
+          sequence: 4,
+          taskIndex: 0,
+          type: "completed",
+          status: "completed",
+          summary: "Cancellation review is correct",
+        },
+      });
+      yield* Deferred.succeed(prompt.result, { stopReason: "end_turn" });
+      yield* Fiber.join(sending);
+      yield* h.drainEvents;
+
+      const taskEvents = h.seen.filter(
+        (event) => event.type.startsWith("task.") && event.turnId === turnId,
+      );
+      expect(taskEvents.map((event) => event.type)).toEqual([
+        "task.started",
+        "task.started",
+        "task.progress",
+        "task.progress",
+        "task.completed",
+        "task.completed",
+      ]);
+      expect(taskEvents[0]?.payload).toMatchObject({
+        taskId: "hermes:delegate-1:0",
+        description: "Review cancellation",
+        taskType: "local_agent",
+        role: "reviewer",
+        toolUseId: "delegate-1",
+      });
+      expect(taskEvents[1]?.payload).toMatchObject({
+        taskId: "hermes:delegate-1:1",
+        description: "Check retry behavior",
+        toolUseId: "delegate-1",
+      });
+      expect(taskEvents[2]?.payload).toMatchObject({
+        taskId: "hermes:delegate-1:1",
+        summary: "Running search_files",
+        lastToolName: "search_files",
+      });
+      expect(taskEvents[3]?.payload).toMatchObject({
+        taskId: "hermes:delegate-1:1",
+        summary: "Thinking",
+      });
+      expect(taskEvents[4]?.payload).toMatchObject({
+        taskId: "hermes:delegate-1:1",
+        status: "completed",
+        summary: "Retry behavior is correct",
+      });
+      expect(taskEvents[5]?.payload).toMatchObject({
+        taskId: "hermes:delegate-1:0",
+        status: "completed",
+        summary: "Cancellation review is correct",
+      });
+    }),
+  );
+
+  it.effect("settles steered delegations and rejects their late frames on a new turn", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "auto-accept-edits",
+      });
+      const first = yield* h.adapter
+        .sendTurn({ threadId, input: "Delegate and think" })
+        .pipe(Effect.forkChild);
+      const firstPrompt = yield* h.nextPrompt;
+      const firstStarted = yield* h.waitForEvent((event) => event.type === "turn.started");
+      const firstTurnId = firstStarted.turnId;
+      const delegateCall = {
+        toolCallId: "delegate-1",
+        title: "Ran command",
+        kind: "execute",
+        status: "inProgress" as const,
+        data: {
+          rawInput: {
+            toolName: "delegate_task",
+            tasks: [
+              { goal: "Review cancellation", role: "reviewer" },
+              { goal: "Check retry behavior" },
+            ],
+          },
+          rawOutput: {
+            toolName: "delegate_task",
+            taskProgress: {
+              sequence: 1,
+              taskIndex: 0,
+              type: "completed",
+              status: "completed",
+              summary: "Cancellation review is correct",
+            },
+          },
+        },
+      } as const;
+      yield* h.emitNative({
+        _tag: "ToolCallUpdated",
+        toolCall: {
+          toolCallId: "delegate-1",
+          title: "Ran command",
+          kind: "execute",
+          status: "pending" as const,
+          data: {
+            rawInput: {
+              toolName: "delegate_task",
+              tasks: [
+                { goal: "Review cancellation", role: "reviewer" },
+                { goal: "Check retry behavior" },
+              ],
+            },
+          },
+        },
+        rawPayload: {},
+      });
+      yield* h.emitNative({
+        _tag: "ToolCallUpdated",
+        toolCall: delegateCall,
+        rawPayload: {},
+      });
+      // Child 0 completed; child 1 is still running when the user steers.
+      const steering = yield* h.adapter
+        .sendTurn({ threadId, input: "Ignore that, do this instead" })
+        .pipe(Effect.forkChild);
+      const secondPrompt = yield* h.nextPrompt;
+      // The replacement prompt shares the original turn. When it ends, unfinished
+      // children are parked before turn.completed.
+      yield* Deferred.succeed(secondPrompt.result, { stopReason: "end_turn" });
+      yield* Fiber.join(steering);
+      // The old prompt still resolves; its turn already settled.
+      yield* Deferred.succeed(firstPrompt.result, { stopReason: "end_turn" });
+      yield* Fiber.join(first);
+
+      const next = yield* h.adapter
+        .sendTurn({ threadId, input: "Start a fresh turn" })
+        .pipe(Effect.forkChild);
+      const nextPrompt = yield* h.nextPrompt;
+      const nextStarted = yield* h.waitForEvent((event) => event.type === "turn.started");
+      expect(nextStarted.turnId).not.toBe(firstTurnId);
+      // A late completion from the settled delegation arrives while another turn
+      // is active. It must not be stamped onto that new turn.
+      yield* h.emitNative({
+        _tag: "ToolCallUpdated",
+        toolCall: {
+          ...delegateCall,
+          data: {
+            rawOutput: {
+              toolName: "delegate_task",
+              taskProgress: {
+                sequence: 2,
+                taskIndex: 1,
+                type: "completed",
+                status: "completed",
+                summary: "Late retry result",
+              },
+            },
+          },
+        },
+        rawPayload: {},
+      });
+      yield* Deferred.succeed(nextPrompt.result, { stopReason: "end_turn" });
+      yield* Fiber.join(next);
+      yield* h.drainEvents;
+
+      const firstTurnTasks = h.seen.filter(
+        (event) => event.type.startsWith("task.") && event.turnId === firstTurnId,
+      );
+      expect(firstTurnTasks.map((event) => event.type)).toEqual([
+        "task.started",
+        "task.started",
+        "task.completed",
+        "task.completed",
+      ]);
+      expect(firstTurnTasks[2]?.payload).toMatchObject({
+        taskId: "hermes:delegate-1:0",
+        status: "completed",
+        summary: "Cancellation review is correct",
+      });
+      expect(firstTurnTasks[3]?.payload).toMatchObject({
+        taskId: "hermes:delegate-1:1",
+        status: "stopped",
+        summary: "Ended when the parent turn ended.",
+      });
+      const newTurnTasks = h.seen.filter(
+        (event) => event.type.startsWith("task.") && event.turnId === nextStarted.turnId,
+      );
+      expect(newTurnTasks).toEqual([]);
+    }),
+  );
+
+  it.effect("folds delegate_task progress over a real ACP transport", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-hermes-delegate-",
+      });
+      const hermesPath = writeFakeCli({
+        directory: path.join(cwd, "bin"),
+        name: "hermes",
+        source: `await import("${new URL("../../../scripts/acp-mock-agent.ts", import.meta.url).href}");`,
+        env: { T3_ACP_HERMES: "1", T3_ACP_EMIT_HERMES_DELEGATE_TASK: "1" },
+      });
+      const observed: ProviderRuntimeEvent[] = [];
+      const completed = yield* Deferred.make<void>();
+      const adapter = yield* makeHermesAdapter(
+        decodeSettings({ enabled: true, binaryPath: hermesPath }),
+        { instanceId },
+      );
+      yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) =>
+          Effect.gen(function* () {
+            observed.push(event);
+            if (event.type === "turn.completed") yield* Deferred.succeed(completed, undefined);
+          }),
+        ),
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* adapter.startSession({
+        threadId,
+        cwd,
+        runtimeMode: "auto-accept-edits",
+      });
+      yield* adapter.sendTurn({ threadId, input: "Delegate this review." });
+      yield* Deferred.await(completed);
+
+      const taskEvents = observed.filter((event) => event.type.startsWith("task."));
+      expect(taskEvents.map((event) => event.type)).toEqual([
+        "task.started",
+        "task.started",
+        "task.progress",
+        "task.progress",
+        "task.completed",
+        "task.completed",
+      ]);
+      // The same turn owns the whole delegation fleet, including the child
+      // that only completed on the terminal tool-call frame.
+      expect(new Set(taskEvents.map((event) => event.turnId))).toHaveLength(1);
+      expect(taskEvents[4]?.payload).toMatchObject({
+        taskId: "hermes:delegate-tool-1:1",
+        status: "completed",
+        summary: "Retry behavior is correct",
+      });
+      expect(taskEvents[5]?.payload).toMatchObject({
+        taskId: "hermes:delegate-tool-1:0",
+        status: "completed",
+        summary: "Cancellation review is correct",
       });
     }),
   );
