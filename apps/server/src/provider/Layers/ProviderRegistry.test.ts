@@ -2634,6 +2634,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 "devin",
                 "grok",
                 "hermes",
+                "muse",
                 "opencode",
               ]);
               assert.strictEqual(cursorProvider?.enabled, false);
