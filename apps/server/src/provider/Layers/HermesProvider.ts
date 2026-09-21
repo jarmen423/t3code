@@ -46,6 +46,27 @@ const HERMES_PRESENTATION = {
 } as const;
 
 const EMPTY_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
+const HERMES_DEFAULT_REASONING_EFFORT = "high";
+const HERMES_REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
+  none: "Off",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra High",
+  max: "Max",
+  ultra: "Ultra",
+};
+const HERMES_FALLBACK_REASONING_EFFORTS = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+] as const;
 const HEALTH_CHECK_TIMEOUT = "30 seconds";
 const SETUP_MESSAGE =
   "Hermes is installed but has no configured model provider. Run `hermes setup` in a terminal.";
@@ -73,29 +94,71 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+type HermesReasoningOption = {
+  value: string;
+  label: string;
+  description?: string;
+  isDefault?: boolean;
+};
+
+function fallbackHermesReasoningOptions(currentEffort?: string): {
+  readonly options: ReadonlyArray<HermesReasoningOption>;
+  readonly currentValue: string;
+} {
+  const currentValue =
+    currentEffort &&
+    HERMES_FALLBACK_REASONING_EFFORTS.some((value) => value === currentEffort) &&
+    isValidHermesReasoningEffortToken(currentEffort)
+      ? currentEffort
+      : HERMES_DEFAULT_REASONING_EFFORT;
+  return {
+    options: HERMES_FALLBACK_REASONING_EFFORTS.map((value) => ({
+      value,
+      label: HERMES_REASONING_EFFORT_LABELS[value] ?? value,
+      ...(value === HERMES_DEFAULT_REASONING_EFFORT ? { isDefault: true } : {}),
+    })),
+    currentValue,
+  };
+}
+
+function capabilitiesFromReasoning(reasoning: {
+  readonly options: ReadonlyArray<HermesReasoningOption>;
+  readonly currentValue: string | undefined;
+}): ModelCapabilities {
+  if (reasoning.options.length === 0) {
+    return EMPTY_MODEL_CAPABILITIES;
+  }
+  return createModelCapabilities({
+    optionDescriptors: [
+      {
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select",
+        options: reasoning.options.map((option) => ({
+          id: option.value,
+          label: option.label,
+          ...(option.description ? { description: option.description } : {}),
+          ...(option.isDefault ? { isDefault: true } : {}),
+        })),
+        ...(reasoning.currentValue ? { currentValue: reasoning.currentValue } : {}),
+      },
+    ],
+  });
+}
+
 function hermesReasoningOptionsFromModel(model: EffectAcpSchema.ModelInfo): {
-  readonly options: ReadonlyArray<{
-    value: string;
-    label: string;
-    description?: string;
-    isDefault?: boolean;
-  }>;
+  readonly options: ReadonlyArray<HermesReasoningOption>;
   readonly currentValue: string | undefined;
 } {
   const meta = model._meta;
-  if (!meta || meta.supportsReasoningEffort === false) {
+  if (meta?.supportsReasoningEffort === false) {
     return { options: [], currentValue: undefined };
   }
 
-  const currentEffort = nonEmptyString(meta.reasoningEffort);
-  const advertisedOptions = Array.isArray(meta.reasoningEfforts) ? meta.reasoningEfforts : [];
+  const currentEffort = nonEmptyString(meta?.reasoningEffort);
+  const advertisedOptions = Array.isArray(meta?.reasoningEfforts) ? meta.reasoningEfforts : [];
   const seen = new Set<string>();
-  const options: Array<{
-    value: string;
-    label: string;
-    description?: string;
-    advertisedDefault: boolean;
-  }> = [];
+  const options: Array<HermesReasoningOption & { advertisedDefault: boolean }> = [];
 
   for (const entry of advertisedOptions) {
     if (!isRecord(entry)) {
@@ -122,6 +185,10 @@ function hermesReasoningOptionsFromModel(model: EffectAcpSchema.ModelInfo): {
     });
   }
 
+  if (options.length === 0) {
+    return fallbackHermesReasoningOptions(currentEffort);
+  }
+
   const currentValue =
     currentEffort && options.some((option) => option.value === currentEffort)
       ? currentEffort
@@ -142,25 +209,21 @@ function hermesReasoningOptionsFromModel(model: EffectAcpSchema.ModelInfo): {
 }
 
 export function buildHermesModelCapabilities(model: EffectAcpSchema.ModelInfo): ModelCapabilities {
-  const reasoning = hermesReasoningOptionsFromModel(model);
-  return reasoning.options.length > 0
-    ? createModelCapabilities({
-        optionDescriptors: [
-          {
-            id: "reasoningEffort",
-            label: "Reasoning",
-            type: "select",
-            options: reasoning.options.map((option) => ({
-              id: option.value,
-              label: option.label,
-              ...(option.description ? { description: option.description } : {}),
-              ...(option.isDefault ? { isDefault: true } : {}),
-            })),
-            ...(reasoning.currentValue ? { currentValue: reasoning.currentValue } : {}),
-          },
-        ],
-      })
-    : EMPTY_MODEL_CAPABILITIES;
+  return capabilitiesFromReasoning(hermesReasoningOptionsFromModel(model));
+}
+
+function defaultHermesModelCapabilities(
+  native: ReadonlyArray<ServerProviderModel>,
+): ModelCapabilities {
+  const current = native.find((model) => model.isDefault) ?? native[0];
+  const descriptors = current?.capabilities?.optionDescriptors ?? [];
+  if (descriptors.length > 0) {
+    return createModelCapabilities({ optionDescriptors: descriptors });
+  }
+  // A current native with empty descriptors opted out via supportsReasoningEffort: false.
+  return current
+    ? EMPTY_MODEL_CAPABILITIES
+    : capabilitiesFromReasoning(fallbackHermesReasoningOptions());
 }
 
 /**
@@ -197,18 +260,22 @@ export function buildHermesModelsFromSession(
       },
     ];
   });
+  // The composer keeps this product slug selected, so it has to carry a
+  // Reasoning descriptor or the traits picker never appears. Copy the current
+  // native model's ladder when ACP advertised one; otherwise use Hermes'
+  // none..ultra fallback so a silent catalog still shows the control.
   return providerModelsFromSettings(
     [
       {
         slug: HERMES_DEFAULT_MODEL_SLUG,
         name: "Hermes configured model",
         isCustom: false,
-        capabilities: EMPTY_MODEL_CAPABILITIES,
+        capabilities: defaultHermesModelCapabilities(native),
       },
       ...native,
     ],
     customModels ?? [],
-    EMPTY_MODEL_CAPABILITIES,
+    capabilitiesFromReasoning(fallbackHermesReasoningOptions()),
   );
 }
 

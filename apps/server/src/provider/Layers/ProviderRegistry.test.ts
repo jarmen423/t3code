@@ -2622,12 +2622,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               const cursorProvider = providers.find(
                 (provider) => provider.instanceId === ProviderInstanceId.make("cursor"),
               );
+              const devinProvider = providers.find(
+                (provider) => provider.instanceId === ProviderInstanceId.make("devin"),
+              );
 
               assert.deepStrictEqual(providers.map((provider) => provider.instanceId).toSorted(), [
                 "antigravity",
                 "claudeAgent",
                 "codex",
                 "cursor",
+                "devin",
                 "grok",
                 "hermes",
                 "muse",
@@ -2639,6 +2643,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 cursorProvider?.message,
                 "Cursor is disabled in T3 Code settings.",
               );
+              // Devin registers alongside the other drivers and stays off
+              // until a user opts in — no `devin acp` spawn ever ran.
+              assert.strictEqual(devinProvider?.enabled, false);
+              assert.strictEqual(devinProvider?.status, "disabled");
+              assert.strictEqual(devinProvider?.message, "Devin is disabled in T3 Code settings.");
               assert.strictEqual(cursorSpawned, false);
             }).pipe(Effect.provide(runtimeServices));
           }),
