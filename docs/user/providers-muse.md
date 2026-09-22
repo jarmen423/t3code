@@ -17,17 +17,19 @@ muse login
 
 `muse login` is an interactive terminal flow. It cannot run inside T3 Code. Until it completes, the Muse Code provider card shows that setup is required. Once the host is signed in, T3 Code picks that up automatically. There is no separate sign-in button.
 
-`muse-acp-bridge` and `muse-bridge` are different programs from the same release. T3 Code launches `muse-acp-bridge` and speaks ACP to it. `muse-bridge` is an HTTP server for Hermes and Codex. Renaming that file does not make the provider check pass.
+`muse-acp-bridge` and `muse-bridge` are different programs. T3 Code launches `muse-acp-bridge`. `muse-bridge` is an HTTP server for Hermes and Codex.
 
 On macOS and Linux, enable Muse Code in **Settings → Providers**. Put `muse-acp-bridge` on `PATH`, or set **Binary path** (for example `~/.local/bin/muse-acp-bridge`).
 
-On Windows, install the native Muse CLI, then put the ACP bridge beside it. WSL is not required.
+On Windows, install the native Muse CLI, then download the bridge into the same folder. The release file is already named `muse-acp-bridge.exe`.
 
 ```powershell
 irm https://dev.meta.ai/install.ps1 | iex
+$dir = "$env:LOCALAPPDATA\Programs\muse"
+Invoke-WebRequest https://github.com/jarmen423/muse-client-bridge/releases/download/v0.1.1/muse-acp-bridge.exe -OutFile "$dir\muse-acp-bridge.exe"
 ```
 
-Download `muse-acp-bridge-windows-x86_64.exe` from the [muse-client-bridge releases](https://github.com/jarmen423/muse-client-bridge/releases) and copy it to `%LOCALAPPDATA%\Programs\muse\muse-acp-bridge.exe`. Open a new terminal and run `muse login`. Enable Muse Code in **Settings → Providers**. If T3 Code still cannot find the bridge, set **Binary path** to that exe.
+Open a new terminal and run `muse login`. Enable Muse Code in **Settings → Providers**. Leave **Binary path** as `muse-acp-bridge`.
 
 ## Models
 
