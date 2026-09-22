@@ -250,6 +250,8 @@ jobs:
               --notes "Fork build of T3 Code with the Hermes Agent ACP provider. Windows exe (unsigned), Linux AppImage, npm CLI tarball, and self-contained CLI archives for SSH-provisioned remote environments."
           fi
           shopt -s nullglob
+          # Do not also glob t3-resource-monitor*: the .exe is already in
+          # ./*.exe, and uploading it twice makes GitHub reject the release.
           assets=(./*.exe ./*.exe.blockmap ./*.AppImage ./*.yml ./*.tgz \
-            ./*.tar.gz ./*.zip ./SHA256SUMS ./t3-resource-monitor*)
+            ./*.tar.gz ./*.zip ./SHA256SUMS ./t3-resource-monitor)
           gh release upload "$tag" --repo "$repo" --clobber "${assets[@]}"
