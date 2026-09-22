@@ -122,6 +122,8 @@ Provider CLIs must be on the server's `PATH`. If T3 Code cannot find one, set it
 **Binary path** in provider settings, especially when using a version manager.
 Cursor's executable is `cursor-agent`, although its login command is
 `agent login`. Antigravity can use its managed runtime without a `PATH` entry.
+Muse Code needs both the Muse CLI and `muse-acp-bridge` on that machine. T3 Code
+does not ship the bridge. See [Muse Code](./providers-muse.md).
 
 When a provider CLI is behind its latest release, its provider card shows the
 available version. **Update now** appears only when T3 Code can tell which

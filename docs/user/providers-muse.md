@@ -9,21 +9,25 @@ Muse support is experimental and off by default.
 
 ## Set up Muse Code
 
-Install Muse Code and `muse-acp-bridge` on the machine that runs the T3 Code
-server, then sign in from a terminal on that machine:
+T3 Code does not include `muse-acp-bridge`. Install Muse Code and that bridge on the machine that runs the T3 Code server, then sign in from a terminal on that machine:
 
 ```bash
 muse login
 ```
 
-`muse login` is an interactive terminal flow; it cannot run inside T3 Code.
-Until it completes, the Muse Code provider card shows that setup is required.
-Once the host is signed in, T3 Code picks that up automatically — there is no
-separate sign-in button.
+`muse login` is an interactive terminal flow. It cannot run inside T3 Code. Until it completes, the Muse Code provider card shows that setup is required. Once the host is signed in, T3 Code picks that up automatically. There is no separate sign-in button.
 
-In **Settings → Providers**, enable Muse Code. If the `muse-acp-bridge` binary
-is not on the server's `PATH`, set **Binary path** to its location (for example
-`~/.local/bin/muse-acp-bridge`).
+`muse-acp-bridge` and `muse-bridge` are different programs from the same release. T3 Code launches `muse-acp-bridge` and speaks ACP to it. `muse-bridge` is an HTTP server for Hermes and Codex. Renaming that file does not make the provider check pass.
+
+On macOS and Linux, enable Muse Code in **Settings → Providers**. Put `muse-acp-bridge` on `PATH`, or set **Binary path** (for example `~/.local/bin/muse-acp-bridge`).
+
+On Windows, install the native Muse CLI, then put the ACP bridge beside it. WSL is not required.
+
+```powershell
+irm https://dev.meta.ai/install.ps1 | iex
+```
+
+Download `muse-acp-bridge-windows-x86_64.exe` from the [muse-client-bridge releases](https://github.com/jarmen423/muse-client-bridge/releases) and copy it to `%LOCALAPPDATA%\Programs\muse\muse-acp-bridge.exe`. Open a new terminal and run `muse login`. Enable Muse Code in **Settings → Providers**. If T3 Code still cannot find the bridge, set **Binary path** to that exe.
 
 ## Models
 
