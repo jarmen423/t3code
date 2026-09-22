@@ -26,7 +26,7 @@ On Windows, install the native Muse CLI, then download the bridge into the same 
 ```powershell
 irm https://dev.meta.ai/install.ps1 | iex
 $dir = "$env:LOCALAPPDATA\Programs\muse"
-Invoke-WebRequest https://github.com/jarmen423/muse-client-bridge/releases/download/v0.1.1/muse-acp-bridge.exe -OutFile "$dir\muse-acp-bridge.exe"
+Invoke-WebRequest https://github.com/jarmen423/muse-client-bridge/releases/download/v0.1.2/muse-acp-bridge.exe -OutFile "$dir\muse-acp-bridge.exe"
 ```
 
 Open a new terminal and run `muse login`. Enable Muse Code in **Settings → Providers**. Leave **Binary path** as `muse-acp-bridge`.
