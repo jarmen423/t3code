@@ -38,6 +38,7 @@ import {
   resolveSshCommand,
   resolveSshTarget,
   runSshCommand,
+  stripBenignSshStderrLines,
   targetConnectionKey,
 } from "./command.ts";
 import {
@@ -225,7 +226,7 @@ function buildRemoteNodeEngineCheckScript(): string {
 }
 
 function normalizeSshErrorMessage(stderr: string, fallbackMessage: string): string {
-  const cleaned = stderr.trim();
+  const cleaned = stripBenignSshStderrLines(stderr).trim();
   return cleaned.length > 0 ? cleaned : fallbackMessage;
 }
 
@@ -497,6 +498,7 @@ if ! t3_runtime_ready; then
   case "$(uname -s)" in
     Darwin) T3_PLATFORM="darwin" ;;
     Linux) T3_PLATFORM="linux" ;;
+    MINGW64_NT* | MSYS_NT* | CYGWIN_NT*) T3_PLATFORM="win32" ;;
     *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -s)" >&2; exit 1 ;;
   esac
   case "$(uname -m)" in
@@ -504,7 +506,10 @@ if ! t3_runtime_ready; then
     x86_64 | amd64) T3_ARCH="x64" ;;
     *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -m)" >&2; exit 1 ;;
   esac
-  T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz"
+  case "$T3_PLATFORM" in
+    win32) T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.zip" ;;
+    *) T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz" ;;
+  esac
   T3_STAGING="$(mktemp -d "$HOME/.t3/runtime/versions/.staging-XXXXXX")"
   trap 'rm -rf "$T3_STAGING" "$T3_LOCK"' EXIT
   t3_fetch() {
@@ -524,7 +529,27 @@ if ! t3_runtime_ready; then
   if [ -z "$T3_EXPECTED" ] || [ "$T3_ACTUAL" != "$T3_EXPECTED" ]; then
     printf 'Checksum mismatch for %s.\\n' "$T3_ARCHIVE" >&2; exit 1
   fi
-  tar -xzf "$T3_STAGING/$T3_ARCHIVE" -C "$T3_STAGING" --strip-components=1
+  t3_unpack() {
+    mkdir -p "$2"
+    if command -v unzip >/dev/null 2>&1; then
+      unzip -q "$1" -d "$2"
+    elif command -v powershell >/dev/null 2>&1; then
+      powershell -NoProfile -Command "Expand-Archive -LiteralPath '$(cygpath -w "$1")' -DestinationPath '$(cygpath -w "$2")' -Force"
+    else
+      # Windows ships bsdtar as System32/tar.exe, and it reads zips. A bare
+      # tar under Git Bash is GNU tar, which cannot.
+      "$(cygpath -u "\${SystemRoot:-C:/Windows}")/System32/tar.exe" -xf "$(cygpath -w "$1")" -C "$(cygpath -w "$2")"
+    fi
+  }
+  if [ "$T3_PLATFORM" = "win32" ]; then
+    # The zip holds a single t3-<stem>/ root; flatten it into the staging
+    # dir the way --strip-components=1 does for the tarballs.
+    t3_unpack "$T3_STAGING/$T3_ARCHIVE" "$T3_STAGING/.unpacked"
+    mv "$T3_STAGING/.unpacked/"*/* "$T3_STAGING/"
+    rm -rf "$T3_STAGING/.unpacked"
+  else
+    tar -xzf "$T3_STAGING/$T3_ARCHIVE" -C "$T3_STAGING" --strip-components=1
+  fi
   rm -f "$T3_STAGING/$T3_ARCHIVE" "$T3_STAGING/SHA256SUMS"
   # Prove the binary runs here (libc, arch) before marking it ready, or every
   # later launch would exec a broken install instead of retrying.

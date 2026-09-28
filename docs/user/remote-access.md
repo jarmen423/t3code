@@ -125,10 +125,14 @@ In the desktop app, open **Settings → Connections → Add environment**, choos
 or reuses a server there and opens the port forward for you. Projects, provider
 credentials, and agent work stay on the remote machine.
 
-The remote host must be Linux or an Apple Silicon Mac with `curl` or `wget`,
-`tar`, `sha256sum` or `shasum`, and [provider setup](./install.md#providers).
-The first launch downloads T3 Code's server to `~/.t3/runtime` on the host, so
-it takes longer than later ones.
+The remote host must be Linux, an Apple Silicon Mac, or Windows with `curl`
+or `wget`, `tar`, `sha256sum` or `shasum`, and
+[provider setup](./install.md#providers). A Windows host additionally needs
+its SSH shell to be a POSIX environment such as Git Bash, MSYS2, or Cygwin,
+since the bootstrap is a POSIX `sh` script; it unpacks the Windows zip
+archive with `unzip`, PowerShell `Expand-Archive`, or the bsdtar Windows
+ships in System32. The first launch downloads T3 Code's server to
+`~/.t3/runtime` on the host, so it takes longer than later ones.
 Provider CLIs must be on the `PATH` of a non-interactive login shell there;
 check with:
 

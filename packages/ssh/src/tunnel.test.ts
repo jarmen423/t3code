@@ -174,6 +174,33 @@ describe("ssh tunnel scripts", () => {
     assert.include(buildRemoteLaunchScript(NODE_SCRIPT), "T3_ARCHIVE_MODE=0");
   });
 
+  it("maps Windows POSIX shells to the win32 zip archive", () => {
+    const script = buildRemoteT3RunnerScript(ARCHIVE);
+
+    assert.include(script, 'MINGW64_NT* | MSYS_NT* | CYGWIN_NT*) T3_PLATFORM="win32" ;;');
+    assert.include(
+      script,
+      'win32) T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.zip" ;;',
+    );
+    assert.include(
+      script,
+      '*) T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz" ;;',
+    );
+    // Zips hold a single t3-<stem>/ root: unpack into a scratch dir, then
+    // flatten it like --strip-components=1. unzip first, then PowerShell's
+    // Expand-Archive, then the bsdtar Windows ships in System32.
+    assert.include(script, 'unzip -q "$1" -d "$2"');
+    assert.include(script, "Expand-Archive -LiteralPath");
+    assert.include(script, "System32/tar.exe");
+    assert.isBelow(script.indexOf("command -v unzip"), script.indexOf("command -v powershell"));
+    assert.include(script, 'mv "$T3_STAGING/.unpacked/"*/* "$T3_STAGING/"');
+    assert.include(script, 'if [ "$T3_PLATFORM" = "win32" ]; then');
+    assert.include(
+      script,
+      'tar -xzf "$T3_STAGING/$T3_ARCHIVE" -C "$T3_STAGING" --strip-components=1',
+    );
+  });
+
   it("rejects archive versions that are not a single exact version segment", () => {
     for (const archiveVersion of [
       "../other",

@@ -15,6 +15,7 @@ import {
   getLastNonEmptyOutputLine,
   parseSshResolveOutput,
   runSshCommand,
+  stripBenignSshStderrLines,
 } from "./command.ts";
 import { SshCommandError } from "./errors.ts";
 
@@ -138,6 +139,98 @@ describe("ssh command", () => {
       }
     }).pipe(Effect.provide(processLayer));
   });
+
+  it.effect("keeps real error lines over benign ssh warnings in non-zero command failures", () => {
+    const stderr = [
+      "** WARNING: connection is not using a post-quantum key exchange algorithm.",
+      '** This session may be vulnerable to "store now, decrypt later" attacks.',
+      "** The server may need to be upgraded. See https://openssh.com/pq.html",
+      "Warning: Permanently added 'devbox.example.com' (ED25519) to the list of known hosts.",
+      "Remote host MINGW64_NT-10.0-26200 has no t3 release archive.",
+      "",
+    ].join("\n");
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(makeFailedProcess({ stdout: "", stderr })),
+    );
+    const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
+    const processLayer = Layer.mergeAll(NodeServices.layer, spawnerLayer);
+
+    return Effect.gen(function* () {
+      const result = yield* Effect.result(
+        runSshCommand(
+          {
+            alias: "devbox",
+            hostname: "devbox.example.com",
+            username: "julius",
+            port: 2222,
+          },
+          { remoteCommandArgs: ["sh", "-s"] },
+        ),
+      );
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.instanceOf(result.failure, SshCommandError);
+        assert.equal(
+          result.failure.message,
+          "Remote host MINGW64_NT-10.0-26200 has no t3 release archive.",
+        );
+        // The stored stderr stays verbatim; only the message is filtered.
+        assert.equal(result.failure.stderr, stderr);
+      }
+    }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("falls back to the generic message when stderr holds only ssh warnings", () => {
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(
+        makeFailedProcess({
+          stdout: "",
+          stderr:
+            "** WARNING: connection is not using a post-quantum key exchange algorithm.\n" +
+            '** This session may be vulnerable to "store now, decrypt later" attacks.\n' +
+            "** The server may need to be upgraded. See https://openssh.com/pq.html\n",
+        }),
+      ),
+    );
+    const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
+    const processLayer = Layer.mergeAll(NodeServices.layer, spawnerLayer);
+
+    return Effect.gen(function* () {
+      const result = yield* Effect.result(
+        runSshCommand(
+          {
+            alias: "devbox",
+            hostname: "devbox.example.com",
+            username: "julius",
+            port: 2222,
+          },
+          { remoteCommandArgs: ["sh", "-s"] },
+        ),
+      );
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.equal(result.failure.message, "SSH command failed for julius@devbox (exit 1).");
+      }
+    }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("does not strip arbitrary stderr lines that start with a banner", () =>
+    Effect.sync(() => {
+      assert.equal(
+        stripBenignSshStderrLines("** ERROR: remote bootstrap failed\nthe real reason\n"),
+        "** ERROR: remote bootstrap failed\nthe real reason\n",
+      );
+      assert.equal(
+        stripBenignSshStderrLines(
+          "** WARNING: connection is not using a post-quantum key exchange algorithm.\n" +
+            "Permission denied (publickey).\n",
+        ),
+        "Permission denied (publickey).\n",
+      );
+    }),
+  );
 
   it.effect("redacts credentials from stdout in non-zero command failures", () => {
     const spawner = ChildProcessSpawner.make(() =>
