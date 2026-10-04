@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
@@ -29,7 +29,7 @@ type HermesAcpRuntimeHermesSettings = Pick<HermesSettings, "binaryPath">;
 
 export interface HermesAcpRuntimeInput extends Omit<
   AcpSessionRuntime.AcpSessionRuntimeOptions,
-  "authMethodId" | "cancelBehavior" | "clientCapabilities" | "spawn"
+  "authMethodId" | "cancelBehavior" | "spawn"
 > {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly hermesSettings: HermesAcpRuntimeHermesSettings | null | undefined;
@@ -83,11 +83,12 @@ export const makeHermesAcpRuntime = (
         ...input,
         spawn: buildHermesAcpSpawnInput(input.hermesSettings, input.cwd, input.environment),
         authMethodId: resolveHermesAuthMethodId,
+        authenticateEagerly: true,
         // Hermes does not drain queued prompts on cancel — they run after the
         // interrupted turn finishes. Waiting for the prompt response keeps a
         // steered replacement from ever landing in that queue.
         cancelBehavior: "wait-for-prompt",
-        clientCapabilities: {
+        clientCapabilities: input.clientCapabilities ?? {
           fs: { readTextFile: false, writeTextFile: false },
           terminal: false,
         },

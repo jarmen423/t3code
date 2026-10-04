@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import {
   applyHermesAcpMode,
@@ -220,7 +220,7 @@ describe("currentHermesReasoningEffortFromSessionSetup", () => {
 
   const modelWithMeta = (
     modelId: string,
-    meta: Record<string, unknown> | undefined,
+    meta: NonNullable<EffectAcpSchema.ModelInfo["_meta"]> | undefined,
   ): EffectAcpSchema.ModelInfo => ({
     modelId,
     name: modelId,

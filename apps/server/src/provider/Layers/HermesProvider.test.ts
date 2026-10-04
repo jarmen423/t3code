@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -64,7 +64,7 @@ const probedCommands = [
   {
     name: "model",
     description: "Show current model and provider, or switch models",
-    input: { hint: "model name to switch to" },
+    input: { type: "text" as const, hint: "model name to switch to" },
   },
   { name: "compress", description: "Compress conversation context" },
 ] satisfies ReadonlyArray<EffectAcpSchema.AvailableCommand>;

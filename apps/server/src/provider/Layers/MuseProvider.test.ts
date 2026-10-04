@@ -7,7 +7,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -50,7 +50,7 @@ const groupedModelOption = {
   currentValue: "muse-spark-1.3",
   options: [
     {
-      group: "spark",
+      groupId: "spark",
       name: "Spark",
       options: [
         { value: "muse-spark-1.3", name: "Muse Spark 1.3" },
@@ -58,7 +58,7 @@ const groupedModelOption = {
       ],
     },
     {
-      group: "contributor",
+      groupId: "contributor",
       name: "Contributor",
       options: [{ value: "muse-spark-1.3-contributor", name: "Spark 1.3 Contributor" }],
     },
@@ -85,7 +85,11 @@ const sessionSetup = {
 
 const probedCommands = [
   { name: "compact", description: "Compact conversation context" },
-  { name: "help", description: "List available commands", input: { hint: "topic" } },
+  {
+    name: "help",
+    description: "List available commands",
+    input: { type: "text" as const, hint: "topic" },
+  },
 ] satisfies ReadonlyArray<EffectAcpSchema.AvailableCommand>;
 
 const testLayer = Layer.merge(

@@ -8,14 +8,15 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeHermesTextGeneration } from "../../textGeneration/HermesTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeHermesAdapter } from "../Layers/HermesAdapter.ts";
+import { makeForkAcpAdapterV2 } from "../../orchestration-v2/Adapters/ForkAcpAdapterV2.ts";
+import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
 import { makeHermesProvider, type HermesProbeResult } from "../Layers/HermesProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeHermesAcpRuntime, resolveHermesAuthMethodId } from "../acp/HermesAcpSupport.ts";
@@ -37,6 +38,7 @@ const MAINTENANCE_CAPABILITIES = makeManualOnlyProviderMaintenanceCapabilities({
 });
 
 export type HermesDriverEnv =
+  | IdAllocator.IdAllocatorV2
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
@@ -64,7 +66,6 @@ export const HermesDriver: ProviderDriver<HermesSettings, HermesDriverEnv> = {
       const crypto = yield* Crypto.Crypto;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const serverConfig = yield* ServerConfig;
-      const eventLoggers = yield* ProviderEventLoggers;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER,
@@ -148,14 +149,16 @@ export const HermesDriver: ProviderDriver<HermesSettings, HermesDriverEnv> = {
         ),
       );
 
-      const adapter = yield* makeHermesAdapter(effectiveConfig, {
-        instanceId,
-        environment: processEnv,
-        onSessionStarted: provider.onSessionStarted,
-        onAvailableCommands: provider.onAvailableCommands,
-        onAuthRequired: provider.onAuthRequired,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      });
+      const orchestrationAdapter = yield* makeForkAcpAdapterV2(
+        { driver: "hermes", settings: effectiveConfig },
+        {
+          instanceId,
+          environment: processEnv,
+          onSessionStarted: provider.onSessionStarted,
+          onAvailableCommands: provider.onAvailableCommands,
+          onAuthRequired: provider.onAuthRequired,
+        },
+      );
       const textGeneration = yield* makeHermesTextGeneration(effectiveConfig, processEnv);
 
       return {
@@ -166,7 +169,7 @@ export const HermesDriver: ProviderDriver<HermesSettings, HermesDriverEnv> = {
         accentColor,
         enabled,
         snapshot: provider.snapshot,
-        adapter,
+        orchestrationAdapter,
         textGeneration,
       } satisfies ProviderInstance;
     }),

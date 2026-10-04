@@ -9,7 +9,7 @@ import * as Scope from "effect/Scope";
 import { ChildProcess } from "effect/unstable/process";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { spawnAndCollect } from "../providerSnapshot.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
@@ -37,7 +37,7 @@ type DevinAcpRuntimeDevinSettings = Pick<DevinSettings, "binaryPath">;
 
 export interface DevinAcpRuntimeInput extends Omit<
   AcpSessionRuntime.AcpSessionRuntimeOptions,
-  "authMethodId" | "cancelBehavior" | "clientCapabilities" | "spawn"
+  "authMethodId" | "cancelBehavior" | "spawn"
 > {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly devinSettings: DevinAcpRuntimeDevinSettings | null | undefined;
@@ -122,12 +122,13 @@ export const makeDevinAcpRuntime = (
         ...input,
         spawn: buildDevinAcpSpawnInput(input.devinSettings, input.cwd, input.environment),
         authMethodId: resolveDevinAuthMethodId,
+        authenticateOnAuthRequired: false,
         // Devin resolves a cancelled `session/prompt` promptly and runs the
         // next prompt normally — nothing queues behind the cancelled turn.
         cancelBehavior: "interrupt",
         // Devin edits files and runs commands through its own tools; it never
         // calls back into the client for fs or terminal access.
-        clientCapabilities: {
+        clientCapabilities: input.clientCapabilities ?? {
           fs: { readTextFile: false, writeTextFile: false },
           terminal: false,
         },

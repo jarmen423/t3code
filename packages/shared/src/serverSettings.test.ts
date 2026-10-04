@@ -224,14 +224,18 @@ describe("serverSettings helpers", () => {
     expect(parsePersistedServerObservabilitySettings("{}")).toEqual({
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
+      otlpLogsUrl: undefined,
     });
     expect(
       parsePersistedServerObservabilitySettings(
-        JSON.stringify({ observability: { otlpTracesUrl: "   ", otlpMetricsUrl: "" } }),
+        JSON.stringify({
+          observability: { otlpTracesUrl: "   ", otlpMetricsUrl: "", otlpLogsUrl: "   " },
+        }),
       ),
     ).toEqual({
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
+      otlpLogsUrl: undefined,
     });
   });
 
@@ -242,12 +246,14 @@ describe("serverSettings helpers", () => {
           observability: {
             otlpTracesUrl: "  http://localhost:4318/v1/traces  ",
             otlpMetricsUrl: "  http://localhost:4318/v1/metrics  ",
+            otlpLogsUrl: "  http://localhost:4318/v1/logs  ",
           },
         }),
       ),
     ).toEqual({
       otlpTracesUrl: "http://localhost:4318/v1/traces",
       otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+      otlpLogsUrl: "http://localhost:4318/v1/logs",
     });
   });
 
@@ -255,6 +261,7 @@ describe("serverSettings helpers", () => {
     expect(parsePersistedServerObservabilitySettings("{")).toEqual({
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
+      otlpLogsUrl: undefined,
     });
   });
 
@@ -454,6 +461,41 @@ describe("serverSettings helpers", () => {
     } satisfies ServerProvider;
 
     expect(resolveSourceControlWriterModelSelection(settings, [unavailableProvider])).toBe(
+      settings.textGenerationModelSelection,
+    );
+    expect(settings.sourceControlWriterModelSelection).toBe(sourceControlWriterModelSelection);
+  });
+
+  it("falls back from a writer provider that cannot generate application text", () => {
+    const instanceId = ProviderInstanceId.make("acp_writer");
+    const sourceControlWriterModelSelection = createModelSelection(instanceId, "default");
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [instanceId]: {
+          driver: ProviderDriverKind.make("acpRegistry"),
+          enabled: true,
+          config: {},
+        },
+      },
+      sourceControlWriterModelSelection,
+    };
+    const incapableProvider = {
+      instanceId,
+      driver: ProviderDriverKind.make("acpRegistry"),
+      supportsTextGeneration: false,
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-07-27T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    } satisfies ServerProvider;
+
+    expect(resolveSourceControlWriterModelSelection(settings, [incapableProvider])).toBe(
       settings.textGenerationModelSelection,
     );
     expect(settings.sourceControlWriterModelSelection).toBe(sourceControlWriterModelSelection);

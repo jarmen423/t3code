@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { writeFakeCli } from "../../testUtils/fakeCli.ts";
 import {
@@ -28,9 +28,7 @@ const initializeWith = (
 });
 
 const modelConfigOption = (
-  options:
-    | ReadonlyArray<EffectAcpSchema.SessionConfigSelectOption>
-    | ReadonlyArray<EffectAcpSchema.SessionConfigSelectGroup>,
+  options: EffectAcpSchema.SessionConfigSelectOptions,
   currentValue = "swe-1.5",
 ): EffectAcpSchema.SessionConfigOption => ({
   type: "select",
@@ -116,12 +114,12 @@ describe("devinModelOptions", () => {
   it("flattens grouped select options in order", () => {
     const config = modelConfigOption([
       {
-        group: "devin",
+        groupId: "devin",
         name: "Devin",
         options: [modelOption("swe-1.5"), modelOption("fusion-sonnet")],
       },
       {
-        group: "other",
+        groupId: "other",
         name: "Other",
         options: [modelOption("claude-opus-5-high")],
       },

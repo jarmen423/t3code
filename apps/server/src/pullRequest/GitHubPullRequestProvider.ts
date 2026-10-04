@@ -1,7 +1,4 @@
-import * as Cache from "effect/Cache";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import type {
   PullRequestActor,
   PullRequestCapabilities,
@@ -11,13 +8,13 @@ import type {
 } from "@t3tools/contracts";
 
 import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
-import { PinnedGitHubCredential } from "../sourceControl/GitHubCli.ts";
 import {
   PullRequestProviderError,
   type PullRequestProviderFailure,
   type ProviderChangeRequestActivity,
   type ProviderChangeRequestDetail,
   type PullRequestProviderApi,
+  type ProviderRepositoryRef,
 } from "./PullRequestProvider.ts";
 import type { GitHubViewerAccess, GitHubWorkflowRunApproval } from "./gitHubPullRequestJson.ts";
 
@@ -40,6 +37,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   updateMethods: ["merge", "rebase"],
   search: true,
   reactions: true,
+  viewedFiles: "host",
   review: {
     inlineComment: true,
     reply: true,
@@ -192,35 +190,6 @@ const rendersEmpty = (body: string): boolean =>
 export const make = Effect.gen(function* () {
   const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
-  const repositoryAccessCache = yield* Cache.makeWith(
-    (key: string) => {
-      const [cwd, repository, host] = JSON.parse(key) as [string, string, string];
-      return cli.getRepositoryAccess({ cwd, repository, host });
-    },
-    {
-      capacity: 128,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.minutes(10) : Duration.zero),
-    },
-  );
-  const getRepositoryAccess = (input: {
-    readonly cwd: string;
-    readonly repository: string;
-    readonly host: string;
-  }) =>
-    PinnedGitHubCredential.pipe(
-      Effect.flatMap((credential) =>
-        Cache.get(
-          repositoryAccessCache,
-          JSON.stringify([
-            input.cwd,
-            input.repository,
-            input.host,
-            credential?.credentialFingerprint ?? null,
-          ]),
-        ),
-      ),
-    );
-
   const fail = (operation: string) => (error: GitHubPullRequestCli.GitHubPullRequestCliError) =>
     new PullRequestProviderError({
       provider: "github",
@@ -229,6 +198,57 @@ export const make = Effect.gen(function* () {
       detail: error.detail,
       cause: error,
     });
+
+  const readChecks = (input: ProviderRepositoryRef & { readonly number: number }) =>
+    cli.getPullRequestDetail(input).pipe(
+      Effect.flatMap((pullRequest) =>
+        (pullRequest.state !== "open" || pullRequest.isCrossRepository !== true
+          ? Effect.succeed({
+              runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
+              unavailable: false,
+            })
+          : pullRequest.headSha == null || pullRequest.headRepositoryOwner == null
+            ? Effect.succeed({
+                runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
+                unavailable: true,
+              })
+            : cli
+                .listWorkflowRunsRequiringApproval({
+                  ...input,
+                  headSha: pullRequest.headSha,
+                  headBranch: pullRequest.headBranch,
+                  headRepositoryOwner: pullRequest.headRepositoryOwner,
+                  isCrossRepository: true,
+                })
+                .pipe(
+                  Effect.matchEffect({
+                    onFailure: (error) =>
+                      error._tag === "GitHubCliRateLimitError" ||
+                      error._tag === "SourceControlRateLimitPausedError"
+                        ? Effect.fail(error)
+                        : Effect.succeed({
+                            runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
+                            unavailable: true,
+                          }),
+                    onSuccess: (runs) => Effect.succeed({ runs, unavailable: false }),
+                  }),
+                )
+        ).pipe(
+          Effect.map((workflowApprovals) => ({
+            ...pullRequest,
+            author: withAvatar(pullRequest.author, new Map(), input.host),
+            checks: withWorkflowApprovals(
+              pullRequest.checks,
+              workflowApprovals.runs,
+              workflowApprovals.unavailable,
+            ),
+            ...(workflowApprovals.unavailable
+              ? {}
+              : { workflowApprovalsRequired: workflowApprovals.runs.length }),
+          })),
+        ),
+      ),
+    );
 
   const provider: PullRequestProviderApi = {
     kind: "github",
@@ -339,102 +359,41 @@ export const make = Effect.gen(function* () {
     getChangeRequestStack: (input) =>
       cli.getPullRequestStack(input).pipe(Effect.mapError(fail("getChangeRequestStack"))),
 
+    getChangeRequestPreview: (input) =>
+      cli.getPullRequestPreview(input).pipe(Effect.mapError(fail("getChangeRequestPreview"))),
+
+    getChangeRequestChecks: (input) =>
+      cli.revalidateChecks(input, readChecks(input)).pipe(
+        Effect.map(({ state, checks }) => ({ state, checks })),
+        Effect.mapError(fail("getChangeRequestChecks")),
+      ),
+
     getChangeRequest: (input) =>
-      Effect.all(
-        [
-          cli.getPullRequestDetail(input).pipe(
-            Effect.flatMap((pullRequest) =>
-              Effect.all({
-                // Only an open pull request can be behind anything worth saying so about, and
-                // only one whose head repository is known can be compared at all.
-                comparison:
-                  pullRequest.state !== "open" || pullRequest.headRepositoryOwner === null
-                    ? Effect.succeed(null)
-                    : cli
-                        .getPullRequestBaseComparison({
-                          ...input,
-                          headRef: `${pullRequest.headRepositoryOwner}:${pullRequest.headBranch}`,
-                        })
-                        .pipe(Effect.orElseSucceed(() => null)),
-                // GitHub omits a fork workflow that has not been approved from the normal check
-                // rollup. Read the action-required runs by head revision so "all passed" cannot
-                // be shown while a whole workflow is still waiting to start.
-                workflowApprovals:
-                  pullRequest.state !== "open" || pullRequest.isCrossRepository !== true
-                    ? Effect.succeed({
-                        runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
-                        unavailable: false,
-                      })
-                    : pullRequest.headSha == null || pullRequest.headRepositoryOwner == null
-                      ? Effect.succeed({
-                          runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
-                          unavailable: true,
-                        })
-                      : cli
-                          .listWorkflowRunsRequiringApproval({
-                            ...input,
-                            headSha: pullRequest.headSha,
-                            headBranch: pullRequest.headBranch,
-                            headRepositoryOwner: pullRequest.headRepositoryOwner,
-                            isCrossRepository: true,
-                          })
-                          .pipe(
-                            Effect.matchEffect({
-                              onFailure: (error) =>
-                                error._tag === "GitHubCliRateLimitError" ||
-                                error._tag === "SourceControlRateLimitPausedError"
-                                  ? Effect.fail(error)
-                                  : Effect.succeed({
-                                      runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
-                                      unavailable: true,
-                                    }),
-                              onSuccess: (runs) => Effect.succeed({ runs, unavailable: false }),
-                            }),
-                          ),
-              }).pipe(Effect.map((extra) => ({ pullRequest, ...extra }))),
-            ),
-          ),
-          getRepositoryAccess({
-            cwd: input.cwd,
-            repository: input.repository,
-            host: input.host,
-          }),
-          // A small permissions query replaces the deeply paginated review-thread walk on the
-          // core path. Writes ask again immediately before mutating, so this is presentation.
-          cli.getViewerAccess(input),
-        ],
-        { concurrency: 3 },
-      ).pipe(
-        Effect.mapError(fail("getChangeRequest")),
-        Effect.map(([detail, repository, viewerAccess]): ProviderChangeRequestDetail => ({
-          ...detail.pullRequest,
-          author: withAvatar(detail.pullRequest.author, new Map<string, string>(), input.host),
-          checks: withWorkflowApprovals(
-            detail.pullRequest.checks,
-            detail.workflowApprovals.runs,
-            detail.workflowApprovals.unavailable,
-          ),
-          ...(detail.workflowApprovals.unavailable
-            ? {}
-            : { workflowApprovalsRequired: detail.workflowApprovals.runs.length }),
-          reviewers: detail.pullRequest.reviewRequestLogins.map((login) => ({
+      readChecks(input).pipe(
+        Effect.map((pullRequest): ProviderChangeRequestDetail => ({
+          ...pullRequest,
+          author: withAvatar(pullRequest.author, new Map<string, string>(), input.host),
+          reviewers: pullRequest.reviewRequestLogins.map((login) => ({
             login,
             name: null,
             avatarUrl: null,
           })),
-          mergeCapabilities: repository.mergeCapabilities,
+          mergeCapabilities: pullRequest.viewerAccess.mergeCapabilities,
           viewerPermissions: gitHubViewerPermissions({
-            ...viewerAccess,
-            canUpdateBranch: detail.comparison?.viewerCanUpdate === true,
+            ...pullRequest.viewerAccess,
+            canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
           }),
           baseComparison:
-            detail.comparison === null || detail.comparison.behindBy === null
+            pullRequest.comparison === null || pullRequest.comparison.behindBy === null
               ? "unknown"
-              : detail.comparison.behindBy > 0
+              : pullRequest.comparison.behindBy > 0
                 ? "behind"
                 : "up-to-date",
-          ...(detail.comparison?.behindBy == null ? {} : { behindBy: detail.comparison.behindBy }),
+          ...(pullRequest.comparison?.behindBy == null
+            ? {}
+            : { behindBy: pullRequest.comparison.behindBy }),
         })),
+        Effect.mapError(fail("getChangeRequest")),
       ),
 
     getChangeRequestActivity: (input) =>
@@ -575,6 +534,12 @@ export const make = Effect.gen(function* () {
 
     getDiffFileContents: (input) =>
       cli.getPullRequestDiffFileContents(input).pipe(Effect.mapError(fail("getDiffFileContents"))),
+
+    getFilesViewed: (input) =>
+      cli.getPullRequestFilesViewed(input).pipe(Effect.mapError(fail("getFilesViewed"))),
+
+    setFilesViewed: (input) =>
+      cli.setPullRequestFilesViewed(input).pipe(Effect.mapError(fail("setFilesViewed"))),
 
     listReviewerCandidates: (input) =>
       cli.listReviewerCandidates(input).pipe(Effect.mapError(fail("listReviewerCandidates"))),

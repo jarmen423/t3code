@@ -9,14 +9,15 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeDevinTextGeneration } from "../../textGeneration/DevinTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeDevinAdapter } from "../Layers/DevinAdapter.ts";
+import { makeForkAcpAdapterV2 } from "../../orchestration-v2/Adapters/ForkAcpAdapterV2.ts";
+import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
 import { makeDevinProvider, type DevinProbeResult } from "../Layers/DevinProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeDevinAcpRuntime, probeDevinAuthStatus } from "../acp/DevinAcpSupport.ts";
@@ -39,6 +40,7 @@ const MAINTENANCE_CAPABILITIES = makeManualOnlyProviderMaintenanceCapabilities({
 });
 
 export type DevinDriverEnv =
+  | IdAllocator.IdAllocatorV2
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
@@ -66,7 +68,6 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
       const crypto = yield* Crypto.Crypto;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const serverConfig = yield* ServerConfig;
-      const eventLoggers = yield* ProviderEventLoggers;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER,
@@ -183,14 +184,16 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
         ),
       );
 
-      const adapter = yield* makeDevinAdapter(effectiveConfig, {
-        instanceId,
-        environment: processEnv,
-        onSessionStarted: provider.onSessionStarted,
-        onAvailableCommands: provider.onAvailableCommands,
-        onAuthRequired: provider.onAuthRequired,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      });
+      const orchestrationAdapter = yield* makeForkAcpAdapterV2(
+        { driver: "devin", settings: effectiveConfig },
+        {
+          instanceId,
+          environment: processEnv,
+          onSessionStarted: provider.onSessionStarted,
+          onAvailableCommands: provider.onAvailableCommands,
+          onAuthRequired: provider.onAuthRequired,
+        },
+      );
       const textGeneration = yield* makeDevinTextGeneration(effectiveConfig, processEnv);
 
       return {
@@ -201,7 +204,7 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
         accentColor,
         enabled,
         snapshot: provider.snapshot,
-        adapter,
+        orchestrationAdapter,
         textGeneration,
       } satisfies ProviderInstance;
     }),

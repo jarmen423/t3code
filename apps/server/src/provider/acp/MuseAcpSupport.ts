@@ -14,7 +14,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { type AcpSessionModeState, findSessionConfigOption } from "./AcpRuntimeModel.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
@@ -38,7 +38,7 @@ type MuseAcpRuntimeMuseSettings = Pick<MuseSettings, "binaryPath">;
 
 export interface MuseAcpRuntimeInput extends Omit<
   AcpSessionRuntime.AcpSessionRuntimeOptions,
-  "authMethodId" | "cancelBehavior" | "clientCapabilities" | "spawn"
+  "authMethodId" | "cancelBehavior" | "spawn"
 > {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly museSettings: MuseAcpRuntimeMuseSettings | null | undefined;
@@ -82,10 +82,11 @@ export const makeMuseAcpRuntime = (
         ...input,
         spawn: buildMuseAcpSpawnInput(input.museSettings, input.cwd, input.environment),
         authMethodId: resolveMuseAuthMethodId,
+        authenticateOnAuthRequired: false,
         // The bridge honors session/cancel promptly and drains its own queue;
         // there is no hidden prompt queue to wait out like Hermes has.
         cancelBehavior: "interrupt",
-        clientCapabilities: {
+        clientCapabilities: input.clientCapabilities ?? {
           fs: { readTextFile: false, writeTextFile: false },
           terminal: false,
           // Advertising form elicitation is what makes the bridge forward

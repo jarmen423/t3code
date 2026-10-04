@@ -1,29 +1,3 @@
-import { ProviderDriverKind } from "@t3tools/contracts";
-import {
-  AntigravityIcon,
-  ClaudeAI,
-  CursorIcon,
-  DevinIcon,
-  GrokIcon,
-  HermesIcon,
-  Icon,
-  MuseIcon,
-  OpenAI,
-  OpenCodeIcon,
-} from "../Icons";
-
-export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
-  [ProviderDriverKind.make("codex")]: OpenAI,
-  [ProviderDriverKind.make("claudeAgent")]: ClaudeAI,
-  [ProviderDriverKind.make("opencode")]: OpenCodeIcon,
-  [ProviderDriverKind.make("cursor")]: CursorIcon,
-  [ProviderDriverKind.make("grok")]: GrokIcon,
-  [ProviderDriverKind.make("hermes")]: HermesIcon,
-  [ProviderDriverKind.make("devin")]: DevinIcon,
-  [ProviderDriverKind.make("muse")]: MuseIcon,
-  [ProviderDriverKind.make("antigravity")]: AntigravityIcon,
-};
-
 export type ModelEsque = {
   slug: string;
   name: string;

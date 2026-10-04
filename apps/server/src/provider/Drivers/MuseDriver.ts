@@ -8,14 +8,15 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeMuseTextGeneration } from "../../textGeneration/MuseTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeMuseAdapter } from "../Layers/MuseAdapter.ts";
+import { makeForkAcpAdapterV2 } from "../../orchestration-v2/Adapters/ForkAcpAdapterV2.ts";
+import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
 import { makeMuseProvider, type MuseProbeResult } from "../Layers/MuseProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { isMuseAuthRequiredError, makeMuseAcpRuntime } from "../acp/MuseAcpSupport.ts";
@@ -37,6 +38,7 @@ const MAINTENANCE_CAPABILITIES = makeManualOnlyProviderMaintenanceCapabilities({
 });
 
 export type MuseDriverEnv =
+  | IdAllocator.IdAllocatorV2
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
@@ -67,7 +69,6 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
       const crypto = yield* Crypto.Crypto;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const serverConfig = yield* ServerConfig;
-      const eventLoggers = yield* ProviderEventLoggers;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER,
@@ -150,14 +151,16 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
         ),
       );
 
-      const adapter = yield* makeMuseAdapter(effectiveConfig, {
-        instanceId,
-        environment: processEnv,
-        onSessionStarted: provider.onSessionStarted,
-        onAvailableCommands: provider.onAvailableCommands,
-        onAuthRequired: provider.onAuthRequired,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      });
+      const orchestrationAdapter = yield* makeForkAcpAdapterV2(
+        { driver: "muse", settings: effectiveConfig },
+        {
+          instanceId,
+          environment: processEnv,
+          onSessionStarted: provider.onSessionStarted,
+          onAvailableCommands: provider.onAvailableCommands,
+          onAuthRequired: provider.onAuthRequired,
+        },
+      );
       const textGeneration = yield* makeMuseTextGeneration(effectiveConfig, processEnv);
 
       return {
@@ -168,7 +171,7 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
         accentColor,
         enabled,
         snapshot: provider.snapshot,
-        adapter,
+        orchestrationAdapter,
         textGeneration,
       } satisfies ProviderInstance;
     }),
