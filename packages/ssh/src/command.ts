@@ -142,12 +142,27 @@ function redactSshErrorOutput(output: string): string {
     : redacted;
 }
 
+// OpenSSH 10+ prints a post-quantum advisory banner to stderr on every
+// connection that does not negotiate a post-quantum key exchange (e.g.
+// curve25519-sha256), and a "Permanently added" note for each new host key.
+// Neither is an error, so they must not become an error's message when a
+// command fails for other reasons.
+const BENIGN_SSH_STDERR_LINE =
+  /^\*{2,} .*(?:post-quantum|decrypt later|openssh\.com\/pq)|^Warning: Permanently added .*to the list of known hosts/iu;
+
+export function stripBenignSshStderrLines(stderr: string): string {
+  return stderr
+    .split("\n")
+    .filter((line) => !BENIGN_SSH_STDERR_LINE.test(line.trimStart()))
+    .join("\n");
+}
+
 function normalizeSshErrorMessage(input: {
   readonly stdout?: string;
   readonly stderr: string;
   readonly fallbackMessage: string;
 }): string {
-  const cleanedStderr = input.stderr.trim();
+  const cleanedStderr = stripBenignSshStderrLines(input.stderr).trim();
   if (cleanedStderr.length > 0) {
     return cleanedStderr;
   }
