@@ -19,6 +19,9 @@ on:
   workflow_dispatch:
 
 permissions:
+  # release-desktop.yml requests actions: read; a caller must grant at least
+  # what the reusable workflow asks for or the run fails at startup.
+  actions: read
   contents: read
 
 jobs:
