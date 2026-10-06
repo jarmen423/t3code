@@ -31,7 +31,10 @@ import { layer as idAllocatorLayer } from "./IdAllocator.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import { layer as orchestratorLayer } from "./Orchestrator.ts";
 import { layer as projectionStoreLayer } from "./ProjectionStore.ts";
-import { layer as projectionMaintenanceLayer } from "./ProjectionMaintenance.ts";
+import {
+  compactionWorkerLive as eventStoreCompactionWorkerLive,
+  layer as projectionMaintenanceLayer,
+} from "./ProjectionMaintenance.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import { layerFromProviderInstanceRegistry as providerAdapterRegistryLayerFromProviderInstances } from "./ProviderAdapterRegistry.ts";
 import { layer as providerContinuationRequestsLayer } from "./ProviderContinuationRequests.ts";
@@ -328,6 +331,7 @@ export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
   providerContinuationWorkerProvided,
   agentSessionImporterProvided,
   effectOutboxPruneWorkerLive.pipe(Layer.provide(effectOutboxLayer)),
+  eventStoreCompactionWorkerLive.pipe(Layer.provide(projectionMaintenanceProvided)),
 ).pipe(
   Layer.provide(Scheduler.layer),
   Layer.provideMerge(OrchestrationEventInfrastructureLayerLive),

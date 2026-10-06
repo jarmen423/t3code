@@ -1,12 +1,15 @@
 import { ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { forkParked } from "../serverActivation.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -371,5 +374,27 @@ export const layer: Layer.Layer<
       rebuild: mapError("rebuild")(rebuild),
       compactEventStore: mapError("compact event store")(compactEventStore),
     });
+  }),
+);
+
+/**
+ * Compacts superseded event-store rows shortly after the server is active, then
+ * daily. Snapshot events such as thread.pull-request-synced and thread.visited
+ * carry the whole thread, so without this the event log grows by the full
+ * thread on every small change (pingdotgg/t3code#16558).
+ */
+export const compactionWorkerLive = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const maintenance = yield* ProjectionMaintenanceV2;
+    yield* forkParked(
+      maintenance.compactEventStore.pipe(
+        Effect.tap((summary) => Effect.logInfo("Compacted orchestration event store", summary)),
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to compact orchestration event store", { cause }),
+        ),
+        Effect.repeat(Schedule.spaced(Duration.hours(24))),
+        Effect.delay(Duration.minutes(2)),
+      ),
+    );
   }),
 );
