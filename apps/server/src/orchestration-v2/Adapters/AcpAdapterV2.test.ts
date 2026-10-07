@@ -3431,7 +3431,9 @@ describe("AcpAdapterV2", () => {
         if (event.type === "turn.terminal") terminal = true;
       }
 
-      assert.deepEqual(statuses, ["running", "running", "completed"]);
+      // The mid-stream running re-report lands inside the projection throttle
+      // window, so the terminal update supersedes it.
+      assert.deepEqual(statuses, ["running", "completed"]);
       assert.deepEqual(completedStartedAt, runningStartedAt);
       assert.isNotNull(completedAt);
       assert.equal(completedInput, "true");
@@ -3476,6 +3478,79 @@ describe("AcpAdapterV2", () => {
         Stream.runHead,
       );
       assert.isTrue(Option.isSome(loadAfterRestart));
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.live("throttles streaming command output to one projection per interval", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const instanceId = ProviderInstanceId.make("acp-streaming-output");
+      const threadId = ThreadId.make("thread-acp-streaming-output");
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* ServerConfig.ServerConfig,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+            ),
+            environment: { T3_ACP_EMIT_STREAMING_COMMAND_OUTPUT: "1" },
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-streaming-output"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+      );
+      const projections = events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.nativeItemRef?.nativeId === "tool-call-streaming-output-1" &&
+        event.turnItem.type === "command_execution"
+          ? [{ status: event.turnItem.status, output: event.turnItem.output }]
+          : [],
+      );
+      const running = projections.filter((item) => item.status === "running");
+
+      // 20 updates arrive in one burst: the first lands at once, the trailing
+      // flush carries the latest output before the tool completes.
+      assert.isAtLeast(running.length, 2);
+      assert.isAtMost(running.length, 4);
+      assert.isTrue(running.at(-1)?.output?.endsWith("line 20\n"));
+      assert.equal(projections.at(-1)?.status, "completed");
+      assert.isTrue(projections.at(-1)?.output?.endsWith("line 20\n"));
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
