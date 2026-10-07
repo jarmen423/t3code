@@ -1,15 +1,19 @@
 import {
   type MuseSettings,
   type ProviderInteractionMode,
+  type ProviderUsageLimitsUpdate,
   type ProviderUserInputAnswers,
   ProviderDriverKind,
   type RuntimeMode,
+  type ServerProviderUsageWindow,
   type UserInputQuestion,
 } from "@t3tools/contracts";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -18,6 +22,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { type AcpSessionModeState, findSessionConfigOption } from "./AcpRuntimeModel.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import { clampPercent } from "../providerUsageLimits.ts";
 
 /**
  * Product slug for "keep the model Muse is configured with". It is not a
@@ -457,4 +462,144 @@ export function museElicitationContent(
     }
   }
   return Object.keys(content).length > 0 ? content : undefined;
+}
+
+/**
+ * Decodes the bridge's `_meta.muse.subscription` observation (folded from
+ * MSP `usage/changed`, account-level and point-in-time) into a runtime
+ * usage-limits update. Tolerant: a malformed block yields no windows
+ * rather than failing the session event that carried it.
+ *
+ * The provider reports over-quota percents above 100; they clamp here so
+ * the update always satisfies the window schema.
+ */
+export function museSubscriptionUsageUpdate(
+  rawPayload: unknown,
+): ProviderUsageLimitsUpdate | undefined {
+  const update = isRecord(rawPayload) ? rawPayload.update : undefined;
+  const meta = isRecord(update) ? update._meta : undefined;
+  const muse = isRecord(meta) ? meta.muse : undefined;
+  const subscription = isRecord(muse) ? muse.subscription : undefined;
+  if (!isRecord(subscription)) {
+    return undefined;
+  }
+  const windows = [
+    museSubscriptionWindow(subscription.window, {
+      id: "window",
+      kind: "session",
+      label: "Session",
+    }),
+    museSubscriptionWindow(subscription.weekly, {
+      id: "weekly",
+      kind: "weekly",
+      label: "Weekly",
+    }),
+  ].filter((window): window is ServerProviderUsageWindow => window !== undefined);
+  return windows.length > 0 ? { windows } : undefined;
+}
+
+function museSubscriptionWindow(
+  block: unknown,
+  meta: Pick<ServerProviderUsageWindow, "id" | "kind" | "label">,
+): ServerProviderUsageWindow | undefined {
+  if (!isRecord(block)) {
+    return undefined;
+  }
+  const { usedPercent, resetsAtMs, windowDurationMins } = block;
+  if (typeof usedPercent !== "number" || !Number.isFinite(usedPercent) || usedPercent < 0) {
+    return undefined;
+  }
+  const resetsAt = isoFromEpochMs(resetsAtMs);
+  return {
+    ...meta,
+    usedPercent: clampPercent(usedPercent),
+    ...(resetsAt !== undefined ? { resetsAt } : {}),
+    ...(typeof windowDurationMins === "number" &&
+    Number.isInteger(windowDurationMins) &&
+    windowDurationMins >= 0
+      ? { windowDurationMins }
+      : {}),
+  };
+}
+
+function isoFromEpochMs(value: unknown): string | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+  const made = DateTime.make(value);
+  return Option.isSome(made) ? DateTime.formatIso(made.value) : undefined;
+}
+
+/**
+ * Quota-exhaustion markers in bridge failure text. The host reports every
+ * model failure under the coarse `modelError` kind, so the provider's
+ * 429/quota signal only survives inside the message (e.g.
+ * "model failed after 3 attempts: provider returned 429 ..."). A bare
+ * "exhausted" is deliberately absent: the bridge's own "restarts
+ * exhausted" outage must never read as account quota.
+ */
+const MUSE_USAGE_EXHAUSTED_MESSAGE =
+  /\b429\b|quota|usage.?limit|usage.?exhaust|insufficient.?quota|out of (credit|usage)|no usage left/i;
+
+/** Transient rate pressure (retryable once the window drains). */
+const MUSE_RATE_LIMITED_MESSAGE = /rate.?limit|too many requests|backpressured|overloaded/i;
+
+function museFailureText(cause: unknown): string | undefined {
+  if (isAcpRequestError(cause)) {
+    return cause.message;
+  }
+  if (isAcpTransportError(cause)) {
+    return cause.detail;
+  }
+  return undefined;
+}
+
+/** The account's Muse quota is spent (a reset clock governs the retry). */
+export function isMuseUsageExhaustedError(cause: unknown): boolean {
+  const text = museFailureText(cause);
+  return text !== undefined && MUSE_USAGE_EXHAUSTED_MESSAGE.test(text);
+}
+
+/** The host rate-limited the request (transient, safe to retry). */
+export function isMuseRateLimitedError(cause: unknown): boolean {
+  const text = museFailureText(cause);
+  return (
+    text !== undefined &&
+    !MUSE_USAGE_EXHAUSTED_MESSAGE.test(text) &&
+    MUSE_RATE_LIMITED_MESSAGE.test(text)
+  );
+}
+
+/**
+ * Converts a v2 terminal `idle/_failed` prompt result into the typed
+ * request error the v1 path would have carried. The bridge acks v2
+ * prompts `{}` up front, so without this the failure detail under
+ * `_meta.muse.turnFailed` never reaches failure classification. Only
+ * `_`-prefixed stop reasons convert — every other reason resolves the
+ * prompt normally.
+ */
+export function museFailedStopError(
+  result: { readonly stopReason?: unknown; readonly _meta?: unknown } | null | undefined,
+): EffectAcpErrors.AcpRequestError | undefined {
+  const stopReason = result?.stopReason;
+  if (typeof stopReason !== "string" || !stopReason.startsWith("_")) {
+    return undefined;
+  }
+  const metaValue = result?._meta;
+  const meta = isRecord(metaValue) ? metaValue : undefined;
+  const museValue = meta?.muse;
+  const muse = isRecord(museValue) ? museValue : undefined;
+  const turnFailedValue = muse?.turnFailed;
+  const turnFailed = isRecord(turnFailedValue) ? turnFailedValue : undefined;
+  const kind =
+    typeof turnFailed?.kind === "string" && turnFailed.kind.trim().length > 0
+      ? turnFailed.kind.trim()
+      : stopReason;
+  const detail =
+    typeof turnFailed?.message === "string" && turnFailed.message.trim().length > 0
+      ? turnFailed.message.trim()
+      : undefined;
+  const message =
+    detail === undefined ? `turn failed (${kind})` : `turn failed (${kind}): ${detail}`;
+  return EffectAcpErrors.AcpRequestError.internalError(message);
 }
