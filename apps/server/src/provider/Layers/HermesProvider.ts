@@ -208,7 +208,7 @@ function hermesReasoningOptionsFromModel(model: EffectAcpSchema.ModelInfo): {
   };
 }
 
-export function buildHermesModelCapabilities(model: EffectAcpSchema.ModelInfo): ModelCapabilities {
+function buildHermesModelCapabilities(model: EffectAcpSchema.ModelInfo): ModelCapabilities {
   return capabilitiesFromReasoning(hermesReasoningOptionsFromModel(model));
 }
 

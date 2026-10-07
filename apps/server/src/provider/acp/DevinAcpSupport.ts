@@ -27,9 +27,6 @@ export const DEVIN_DEFAULT_MODEL_SLUG = "default";
  */
 export const DEVIN_BROWSER_AUTH_METHOD_ID = "devin-browser";
 
-/** Devin's plan-interaction mode id inside its `mode` config option. */
-export const DEVIN_PLAN_MODE_ID = "plan";
-
 const DEVIN_DRIVER_KIND = ProviderDriverKind.make("devin");
 const DEVIN_AUTH_STATUS_TIMEOUT = "15 seconds";
 
