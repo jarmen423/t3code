@@ -10,8 +10,10 @@ import {
 } from "@t3tools/contracts";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -524,8 +526,8 @@ function isoFromEpochMs(value: unknown): string | undefined {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
     return undefined;
   }
-  const time = new Date(value).getTime();
-  return Number.isNaN(time) ? undefined : new Date(time).toISOString();
+  const made = DateTime.make(value);
+  return Option.isSome(made) ? DateTime.formatIso(made.value) : undefined;
 }
 
 /**

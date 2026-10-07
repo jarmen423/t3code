@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -605,6 +607,14 @@ const subscriptionPayload = (subscription: unknown) => ({
   },
 });
 
+const isoFixture = (epochMs: number): string => {
+  const made = DateTime.make(epochMs);
+  if (!Option.isSome(made)) {
+    throw new Error(`bad fixture time: ${epochMs}`);
+  }
+  return DateTime.formatIso(made.value);
+};
+
 describe("museSubscriptionUsageUpdate", () => {
   it("decodes the live bridge observation into session and weekly windows", () => {
     const update = museSubscriptionUsageUpdate(
@@ -622,7 +632,7 @@ describe("museSubscriptionUsageUpdate", () => {
           kind: "session",
           label: "Session",
           usedPercent: 2,
-          resetsAt: new Date(1791364120000).toISOString(),
+          resetsAt: isoFixture(1791364120000),
           windowDurationMins: 300,
         },
         {
@@ -630,7 +640,7 @@ describe("museSubscriptionUsageUpdate", () => {
           kind: "weekly",
           label: "Weekly",
           usedPercent: 9,
-          resetsAt: new Date(1791763200000).toISOString(),
+          resetsAt: isoFixture(1791763200000),
         },
       ],
     });
