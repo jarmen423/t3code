@@ -39,7 +39,9 @@ export function assertGrokMonitorOutput(
   assert.equal(monitor?.status, "completed");
   assert.equal(monitor?.output, GROK_MONITOR_TICKS.map((tick) => `${tick}\n`).join(""));
 
-  // Every tick before the end is shown running, with the output so far.
+  // The monitor shows running until its structured end. Replay delivers every
+  // tick at the same instant, so the projection throttle folds them into the
+  // terminal update.
   const monitorUpdates = result.domainEvents.flatMap((event) =>
     event.type === "turn-item.updated" &&
     event.payload.id === monitor?.id &&
@@ -48,11 +50,9 @@ export function assertGrokMonitorOutput(
       : [],
   );
   const firstCompleted = monitorUpdates.findIndex((update) => update.status === "completed");
-  for (const tick of GROK_MONITOR_TICKS.slice(0, -1)) {
-    const tickUpdate = monitorUpdates.findIndex((update) => update.output?.includes(tick));
-    assert.isAtLeast(tickUpdate, 0, `missing monitor update for ${tick}`);
-    assert.isBelow(tickUpdate, firstCompleted, `the monitor completed before ${tick}`);
-    assert.equal(monitorUpdates[tickUpdate]?.status, "running", `${tick} must show running`);
+  assert.isAbove(firstCompleted, 0, "the monitor completed on its first update");
+  for (const update of monitorUpdates.slice(0, firstCompleted)) {
+    assert.equal(update.status, "running", "the monitor must show running until its end");
   }
 
   // Run 1 settles only after the monitor's structured end.

@@ -41,8 +41,9 @@ export function assertGrokBackgroundBashOutput(
   assert.equal(command?.status, "completed");
   assert.equal(command?.output, GROK_BACKGROUND_BASH_TICKS.map((tick) => `${tick}\n`).join(""));
 
-  // The start acknowledgement does not finish the command: every tick before
-  // the end is shown running.
+  // The start acknowledgement does not finish the command: it shows running
+  // until the structured end. Replay delivers every tick at the same instant,
+  // so the projection throttle folds them into the terminal update.
   const commandUpdates = result.domainEvents.flatMap((event) =>
     event.type === "turn-item.updated" &&
     event.payload.id === command?.id &&
@@ -51,11 +52,9 @@ export function assertGrokBackgroundBashOutput(
       : [],
   );
   const firstCompleted = commandUpdates.findIndex((update) => update.status === "completed");
-  for (const tick of GROK_BACKGROUND_BASH_TICKS.slice(0, -1)) {
-    const tickUpdate = commandUpdates.findIndex((update) => update.output?.includes(tick));
-    assert.isAtLeast(tickUpdate, 0, `missing command update for ${tick}`);
-    assert.isBelow(tickUpdate, firstCompleted, `the command completed before ${tick}`);
-    assert.equal(commandUpdates[tickUpdate]?.status, "running", `${tick} must show running`);
+  assert.isAbove(firstCompleted, 0, "the start acknowledgement completed the command");
+  for (const update of commandUpdates.slice(0, firstCompleted)) {
+    assert.equal(update.status, "running", "the command must show running until its end");
   }
 
   // Run 1 settles only after the command's structured end.

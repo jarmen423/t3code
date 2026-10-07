@@ -1079,7 +1079,7 @@ type ProjectedToolStatus = ReturnType<typeof toolStatus> | "interrupted";
 // Agents such as Devin stream command output as many tool_call_updates per
 // second. Each projection persists two events and fans out to every client, so
 // a running tool persists at most once per interval; status changes land at once.
-export const ACP_TOOL_PROJECTION_INTERVAL_MS = 500;
+const ACP_TOOL_PROJECTION_INTERVAL_MS = 500;
 
 interface AcpToolProjection {
   status: ProjectedToolStatus;
