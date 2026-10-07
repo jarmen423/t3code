@@ -159,6 +159,7 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
           onSessionStarted: provider.onSessionStarted,
           onAvailableCommands: provider.onAvailableCommands,
           onAuthRequired: provider.onAuthRequired,
+          onUsageLimits: (update) => provider.snapshot.applyUsageLimits(update),
         },
       );
       const textGeneration = yield* makeMuseTextGeneration(effectiveConfig, processEnv);

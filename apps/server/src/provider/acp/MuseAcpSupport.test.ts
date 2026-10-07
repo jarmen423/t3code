@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -11,13 +13,17 @@ import {
   currentMuseModelIdFromSessionSetup,
   currentMuseReasoningEffortFromSessionSetup,
   isMuseAuthRequiredError,
+  isMuseRateLimitedError,
+  isMuseUsageExhaustedError,
   MUSE_DEFAULT_MODEL_SLUG,
   MUSE_ELICITATION_CANCEL_RESPONSE,
   MUSE_REASONING_EFFORT_CONFIG_ID,
   MuseElicitationCreateParams,
   museElicitationContent,
   museElicitationQuestions,
+  museFailedStopError,
   musePermissionMode,
+  museSubscriptionUsageUpdate,
   normalizeMuseReasoningEffort,
   resolveMuseAcpBaseModelId,
   resolveMuseAuthMethodId,
@@ -590,5 +596,195 @@ describe("museElicitationContent", () => {
 describe("MUSE_ELICITATION_CANCEL_RESPONSE", () => {
   it("is the fail-closed action the bridge expects", () => {
     expect(MUSE_ELICITATION_CANCEL_RESPONSE).toEqual({ action: "cancel" });
+  });
+});
+
+const subscriptionPayload = (subscription: unknown) => ({
+  sessionId: "acp-1",
+  update: {
+    sessionUpdate: "session_info_update",
+    _meta: { muse: { subscription } },
+  },
+});
+
+const isoFixture = (epochMs: number): string => {
+  const made = DateTime.make(epochMs);
+  if (!Option.isSome(made)) {
+    throw new Error(`bad fixture time: ${epochMs}`);
+  }
+  return DateTime.formatIso(made.value);
+};
+
+describe("museSubscriptionUsageUpdate", () => {
+  it("decodes the live bridge observation into session and weekly windows", () => {
+    const update = museSubscriptionUsageUpdate(
+      subscriptionPayload({
+        observedAtMs: 1791346730869,
+        tier: "27681631238169137",
+        weekly: { resetsAtMs: 1791763200000, usedPercent: 9 },
+        window: { resetsAtMs: 1791364120000, usedPercent: 2, windowDurationMins: 300 },
+      }),
+    );
+    expect(update).toEqual({
+      windows: [
+        {
+          id: "window",
+          kind: "session",
+          label: "Session",
+          usedPercent: 2,
+          resetsAt: isoFixture(1791364120000),
+          windowDurationMins: 300,
+        },
+        {
+          id: "weekly",
+          kind: "weekly",
+          label: "Weekly",
+          usedPercent: 9,
+          resetsAt: isoFixture(1791763200000),
+        },
+      ],
+    });
+  });
+
+  it("clamps over-quota percents and drops invalid resets", () => {
+    const update = museSubscriptionUsageUpdate(
+      subscriptionPayload({
+        observedAtMs: 1,
+        tier: "t",
+        weekly: { resetsAtMs: Number.NaN, usedPercent: 140 },
+        window: { resetsAtMs: -5, usedPercent: 200, windowDurationMins: 1.5 },
+      }),
+    );
+    expect(update?.windows).toEqual([
+      {
+        id: "window",
+        kind: "session",
+        label: "Session",
+        usedPercent: 100,
+      },
+      {
+        id: "weekly",
+        kind: "weekly",
+        label: "Weekly",
+        usedPercent: 100,
+      },
+    ]);
+  });
+
+  it("keeps the valid window when its sibling is malformed", () => {
+    const update = museSubscriptionUsageUpdate(
+      subscriptionPayload({
+        observedAtMs: 1,
+        tier: "t",
+        weekly: { resetsAtMs: 1791763200000, usedPercent: 9 },
+        window: { resetsAtMs: 1791364120000, usedPercent: "2" },
+      }),
+    );
+    expect(update?.windows.map((window) => window.id)).toEqual(["weekly"]);
+  });
+
+  it("returns undefined without a subscription observation", () => {
+    expect(museSubscriptionUsageUpdate(undefined)).toBeUndefined();
+    expect(museSubscriptionUsageUpdate({ sessionId: "s", update: {} })).toBeUndefined();
+    expect(
+      museSubscriptionUsageUpdate(subscriptionPayload({ observedAtMs: 1, tier: "t" })),
+    ).toBeUndefined();
+    // Token-occupancy updates carry museCumulative, never a subscription.
+    expect(
+      museSubscriptionUsageUpdate({
+        sessionId: "s",
+        update: {
+          sessionUpdate: "usage_update",
+          used: 1,
+          size: 2,
+          _meta: { museCumulative: { totalTokens: 3 } },
+        },
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("isMuseUsageExhaustedError", () => {
+  it.each([
+    "turn failed (modelError): model error: model failed after 3 attempts: provider returned 429 rate_limited",
+    "turn failed (modelError): quota exceeded for the current window",
+    "turn failed (modelError): insufficient_quota",
+    "turn failed (modelError): usage limit reached, resets in 4h",
+  ])("matches quota exhaustion: %s", (message) => {
+    expect(isMuseUsageExhaustedError(EffectAcpErrors.AcpRequestError.internalError(message))).toBe(
+      true,
+    );
+  });
+
+  it("never matches the bridge's own restart exhaustion", () => {
+    expect(
+      isMuseUsageExhaustedError(
+        EffectAcpErrors.AcpRequestError.internalError(
+          "msp host unavailable (restarts exhausted); restart the bridge",
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not match unrelated errors", () => {
+    expect(
+      isMuseUsageExhaustedError(
+        EffectAcpErrors.AcpRequestError.internalError(
+          "muse login required (serve reported authRequired)",
+        ),
+      ),
+    ).toBe(false);
+    expect(isMuseUsageExhaustedError(new Error("boom"))).toBe(false);
+    expect(isMuseUsageExhaustedError(undefined)).toBe(false);
+  });
+});
+
+describe("isMuseRateLimitedError", () => {
+  it("matches transient rate pressure", () => {
+    expect(
+      isMuseRateLimitedError(
+        EffectAcpErrors.AcpRequestError.internalError(
+          "host rate limited the request; retry the prompt: slow down",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("defers to the exhaustion matcher", () => {
+    expect(
+      isMuseRateLimitedError(
+        EffectAcpErrors.AcpRequestError.internalError("provider returned 429 rate_limited"),
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("museFailedStopError", () => {
+  it("converts _failed with the bridge's turn detail", () => {
+    const error = museFailedStopError({
+      stopReason: "_failed",
+      _meta: {
+        muse: { turnFailed: { kind: "modelError", message: "model error: provider returned 429" } },
+      },
+    });
+    expect(error).toBeDefined();
+    expect(error?.code).toBe(-32603);
+    expect(error?.message).toBe("turn failed (modelError): model error: provider returned 429");
+    expect(isMuseUsageExhaustedError(error)).toBe(true);
+  });
+
+  it("falls back to the stop reason without detail", () => {
+    expect(museFailedStopError({ stopReason: "_failed" })?.message).toBe("turn failed (_failed)");
+    expect(museFailedStopError({ stopReason: "_failed", _meta: {} })?.message).toBe(
+      "turn failed (_failed)",
+    );
+  });
+
+  it("leaves success and cancellation results alone", () => {
+    expect(museFailedStopError({ stopReason: "end_turn" })).toBeUndefined();
+    expect(museFailedStopError({ stopReason: "cancelled" })).toBeUndefined();
+    expect(museFailedStopError({ stopReason: "max_tokens" })).toBeUndefined();
+    expect(museFailedStopError(undefined)).toBeUndefined();
+    expect(museFailedStopError(null)).toBeUndefined();
   });
 });
