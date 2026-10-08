@@ -80,6 +80,7 @@ const emitRunningCommandThenHangOnFirstPrompt =
 const emitEmptySuccessfulBash = process.env.T3_ACP_EMIT_EMPTY_SUCCESSFUL_BASH === "1";
 const emitEmptySuccessfulBashThenHang =
   process.env.T3_ACP_EMIT_EMPTY_SUCCESSFUL_BASH_THEN_HANG === "1";
+const emitStreamingCommandOutput = process.env.T3_ACP_EMIT_STREAMING_COMMAND_OUTPUT === "1";
 const exitOnCancel = process.env.T3_ACP_EXIT_ON_CANCEL === "1";
 const runningCommandIgnoresTerm = process.env.T3_ACP_RUNNING_COMMAND_IGNORE_TERM === "1";
 const runningCommandPidPath = process.env.T3_ACP_RUNNING_COMMAND_PID_PATH;
@@ -1755,6 +1756,38 @@ const program = Effect.gen(function* () {
         yield* agent.client.sessionUpdate(update);
         yield* Effect.sleep("25 millis");
         yield* agent.client.sessionUpdate(update);
+        return yield* finishPrompt(requestedSessionId, "end_turn");
+      }
+
+      // A burst of cumulative command output, like Devin streaming a long ssh command.
+      if (emitStreamingCommandOutput) {
+        const toolCallId = "tool-call-streaming-output-1";
+        let output = "";
+        for (let line = 1; line <= 20; line += 1) {
+          output += `line ${line}\n`;
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId,
+              title: "Terminal",
+              kind: "execute",
+              status: "in_progress",
+              rawInput: { command: "stream" },
+              rawOutput: output,
+            },
+          });
+        }
+        yield* Effect.sleep("1200 millis");
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId,
+            status: "completed",
+            rawOutput: output,
+          },
+        });
         return yield* finishPrompt(requestedSessionId, "end_turn");
       }
 

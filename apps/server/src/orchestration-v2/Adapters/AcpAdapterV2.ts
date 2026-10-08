@@ -1076,6 +1076,18 @@ function toolStatus(
 
 type ProjectedToolStatus = ReturnType<typeof toolStatus> | "interrupted";
 
+// Agents such as Devin stream command output as many tool_call_updates per
+// second. Each projection persists two events and fans out to every client, so
+// a running tool persists at most once per interval; status changes land at once.
+const ACP_TOOL_PROJECTION_INTERVAL_MS = 500;
+
+interface AcpToolProjection {
+  status: ProjectedToolStatus;
+  projectedAt: number;
+  /** A newer state is waiting for the trailing flush. */
+  deferred: boolean;
+}
+
 function nodeStatus(status: ProjectedToolStatus): OrchestrationV2ExecutionNode["status"] {
   return status === "pending" ? "running" : status;
 }
@@ -1169,6 +1181,8 @@ interface ActiveAcpTurn {
   nativeMetadata: OrchestrationV2ProviderThreadNativeMetadata | null;
   readonly tools: Map<string, AcpToolCallState>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
+  /** Last persisted projection per toolCallId; throttles streaming output updates. */
+  readonly toolProjections: Map<string, AcpToolProjection>;
   readonly subagents: Map<string, ActiveAcpSubagent>;
   readonly subagentsBySessionId: Map<string, ActiveAcpSubagent>;
   readonly pendingSubagentNotifications: Map<string, Array<EffectAcpSchema.SessionNotification>>;
@@ -3064,6 +3078,9 @@ export function makeAcpAdapterV2(
             return next ?? current;
           });
 
+        // Serialized so a trailing flush can never persist an older state after a newer one.
+        const toolProjectionPermit = yield* Semaphore.make(1);
+
         emitTool = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           incoming: AcpToolCallState,
@@ -3217,7 +3234,52 @@ export function makeAcpAdapterV2(
             }
           }
           const status = projectedStatus ?? toolStatus(toolCall.status);
+          const projection = context.toolProjections.get(toolCall.toolCallId);
+          const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+          if (
+            projection !== undefined &&
+            projection.status === status &&
+            (status === "pending" || status === "running") &&
+            nowMs - projection.projectedAt < ACP_TOOL_PROJECTION_INTERVAL_MS
+          ) {
+            if (!projection.deferred) {
+              projection.deferred = true;
+              const delayMs = ACP_TOOL_PROJECTION_INTERVAL_MS - (nowMs - projection.projectedAt);
+              yield* Effect.sleep(`${delayMs} millis`).pipe(
+                Effect.andThen(flushDeferredToolProjection(context, toolCall.toolCallId)),
+                Effect.forkIn(sessionScope),
+              );
+            }
+            yield* rearmDeferredFinalize(context);
+            return;
+          }
+          yield* toolProjectionPermit.withPermit(projectTool(context, toolCall, status));
+        });
+
+        const flushDeferredToolProjection = (context: ActiveAcpTurn, toolCallId: string) =>
+          toolProjectionPermit.withPermit(
+            Effect.suspend(() => {
+              const projection = context.toolProjections.get(toolCallId);
+              const toolCall = context.tools.get(toolCallId);
+              // Terminal projections and finalize already persisted a newer state.
+              if (projection?.deferred !== true || toolCall === undefined || context.finalized) {
+                return Effect.void;
+              }
+              return projectTool(context, toolCall, projection.status);
+            }),
+          );
+
+        const projectTool = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          toolCall: AcpToolCallState,
+          status: ProjectedToolStatus,
+        ) {
           const now = yield* DateTime.now;
+          context.toolProjections.set(toolCall.toolCallId, {
+            status,
+            projectedAt: DateTime.toEpochMillis(now),
+            deferred: false,
+          });
           const nativeItemId = `${context.nativeThreadId}:tool:${toolCall.toolCallId}`;
           const ordinal = yield* resolveItemOrdinal(context, nativeItemId);
           const nodeId = providerNodeId(nativeItemId);
@@ -6977,6 +7039,7 @@ export function makeAcpAdapterV2(
               nativeMetadata: initialNativeMetadata,
               tools: new Map(),
               toolStartedAt: new Map(),
+              toolProjections: new Map(),
               subagents: new Map(),
               subagentsBySessionId: new Map(),
               pendingSubagentNotifications: new Map(),

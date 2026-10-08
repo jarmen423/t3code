@@ -206,7 +206,7 @@ export function currentMuseModelIdFromSessionSetup(
 
 const MUSE_REASONING_EFFORT_TOKEN = /^[a-z0-9][a-z0-9._-]{0,31}$/i;
 
-export function isValidMuseReasoningEffortToken(value: string): boolean {
+function isValidMuseReasoningEffortToken(value: string): boolean {
   return MUSE_REASONING_EFFORT_TOKEN.test(value);
 }
 
