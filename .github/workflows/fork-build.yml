@@ -19,6 +19,9 @@ on:
   workflow_dispatch:
 
 permissions:
+  # release-desktop.yml requests actions: read; a caller must grant at least
+  # what the reusable workflow asks for or the run fails at startup.
+  actions: read
   contents: read
 
 jobs:
@@ -51,6 +54,12 @@ jobs:
 
       - name: Align package versions
         run: node scripts/update-release-package-versions.ts "$T3CODE_FORK_VERSION"
+
+      # Upstream's typecheck job runs on Blacksmith runners this fork lacks, so
+      # fork releases would otherwise ship without one. Server only: it is where
+      # the fork's providers and patches live, and it fits a standard runner.
+      - name: Typecheck server
+        run: vp run --filter t3 typecheck
 
       - name: Build JS bundle
         run: vp run build:desktop
