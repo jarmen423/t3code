@@ -656,5 +656,78 @@ describe("provider icon metadata", () => {
     ]);
     expect(entry?.acpRegistryIconUrl).toBe(iconUrl);
     expect(entry?.driverKind).toBe("acpRegistry");
+    expect(entry?.icon).toBeUndefined();
+  });
+
+  it("uses a local command's instance icon and ignores unsafe values", () => {
+    const instanceId = ProviderInstanceId.make("grok_bot");
+    const driver = ProviderDriverKind.make("acpRegistry");
+    const icon = "data:image/png;base64,AAAA";
+    const [entry] = applyProviderInstanceSettings(
+      deriveProviderInstanceEntries([
+        {
+          ...provider({ provider: driver, instanceId }),
+          iconUrl: "https://cdn.agentclientprotocol.com/registry/icons/swe-agent.svg",
+          instanceIcon: icon,
+        },
+      ]),
+      {
+        providerInstances: {
+          [instanceId]: {
+            driver,
+            enabled: true,
+            displayName: "Fred",
+            icon,
+            config: { source: "local", commandPath: "grok-bot-acp" },
+          },
+        },
+      },
+    );
+    expect(entry?.icon).toBe(icon);
+    expect(entry?.acpRegistryAgentId).toBeUndefined();
+    expect(entry?.acpRegistryIconUrl).toBeUndefined();
+
+    const [cleared] = applyProviderInstanceSettings(entry ? [entry] : [], {
+      providerInstances: {
+        [instanceId]: {
+          driver,
+          enabled: true,
+          config: { source: "local", commandPath: "grok-bot-acp" },
+        },
+      },
+    });
+    expect(cleared?.icon).toBeUndefined();
+
+    const [rejected] = applyProviderInstanceSettings(
+      deriveProviderInstanceEntries([provider({ provider: driver, instanceId })]),
+      {
+        providerInstances: {
+          [instanceId]: {
+            driver,
+            enabled: true,
+            icon: "javascript:alert(1)",
+            config: { source: "local" },
+          },
+        },
+      },
+    );
+    expect(rejected?.icon).toBeUndefined();
+  });
+
+  it("keeps a built-in provider's glyph unless that instance sets an icon", () => {
+    const instanceId = ProviderInstanceId.make("codex");
+    const driver = ProviderDriverKind.make("codex");
+    const [plain] = applyProviderInstanceSettings(
+      deriveProviderInstanceEntries([provider({ provider: driver, instanceId })]),
+      { providerInstances: { [instanceId]: { driver, enabled: true } } },
+    );
+    expect(plain?.icon).toBeUndefined();
+    expect(plain?.acpRegistryIconUrl).toBeUndefined();
+
+    const icon = "https://cdn.example.com/codex.png";
+    const [custom] = applyProviderInstanceSettings(plain ? [plain] : [], {
+      providerInstances: { [instanceId]: { driver, enabled: true, icon } },
+    });
+    expect(custom?.icon).toBe(icon);
   });
 });

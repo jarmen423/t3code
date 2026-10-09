@@ -563,7 +563,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const pinnedRow = props.pinned === true;
   const dormant = useSwipeRowDormant(props.activationKey);
 
-  const { providerDrivers, providerIconUrl } = useMemo(() => {
+  const { providerDrivers, providerIconUrl, providerInstanceIcon } = useMemo(() => {
     const provider = props.providers?.find(
       (candidate) =>
         candidate.instanceId ===
@@ -572,6 +572,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     return {
       providerDrivers: resolveThreadListV2ProviderDrivers(thread, props.providers),
       providerIconUrl: provider?.iconUrl,
+      providerInstanceIcon: provider?.instanceIcon,
     };
   }, [thread, props.providers]);
 
@@ -1102,6 +1103,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             ))}
             <ProviderInstanceIcon
               iconUrl={providerIconUrl}
+              instanceIcon={providerInstanceIcon}
               provider={providerInstance.driverKind}
               size={14}
               displayName={providerInstance.displayName}

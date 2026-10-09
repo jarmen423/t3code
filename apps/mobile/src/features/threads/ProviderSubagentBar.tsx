@@ -17,7 +17,11 @@ import { useVisibleSecondClock } from "./use-visible-second-clock";
  */
 export function ProviderSubagentBar(props: {
   /** Driver and catalog icon of the provider running the subagent. */
-  readonly provider: { readonly driver: string; readonly iconUrl?: string | undefined } | null;
+  readonly provider: {
+    readonly driver: string;
+    readonly iconUrl?: string | undefined;
+    readonly instanceIcon?: string | undefined;
+  } | null;
   readonly modelLabel: string;
   /** Reasoning effort as the composer names it, when the subagent has one. */
   readonly effortLabel: string | null;
@@ -43,6 +47,7 @@ export function ProviderSubagentBar(props: {
           {props.provider ? (
             <ProviderIcon
               iconUrl={props.provider.iconUrl}
+              instanceIcon={props.provider.instanceIcon}
               provider={props.provider.driver}
               size={16}
             />

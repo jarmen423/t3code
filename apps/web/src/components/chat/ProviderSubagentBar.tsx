@@ -60,6 +60,7 @@ export function ProviderSubagentBar(props: {
             driverKind={props.provider.driverKind}
             displayName={props.provider.displayName}
             accentColor={props.provider.accentColor}
+            instanceIcon={props.provider.icon}
             acpRegistryAgentId={props.provider.acpRegistryAgentId}
             acpRegistryIconUrl={props.provider.acpRegistryIconUrl}
             showBadge={props.showInstanceBadge}

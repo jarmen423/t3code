@@ -17,6 +17,7 @@ import {
   defaultInstanceIdForDriver,
   isUnconfiguredDefaultInstanceEnabled,
   resolveProviderInstanceEnabled,
+  resolveProviderInstanceIcon,
   type ModelSelection,
   type ProviderDriverKind,
   ProviderInstanceId,
@@ -54,6 +55,8 @@ export interface ProviderInstanceEntry {
   readonly driverKind: ProviderDriverKind;
   readonly displayName: string;
   readonly accentColor?: string | undefined;
+  /** User-configured icon for this instance. Rendered ahead of driver and registry icons. */
+  readonly icon?: string | undefined;
   /** Registry identity used to resolve the official icon for generic ACP instances. */
   readonly acpRegistryAgentId?: string | undefined;
   /** Catalog-advertised icon URL. The renderer still applies the official-CDN allowlist. */
@@ -122,11 +125,13 @@ export function deriveProviderInstanceEntries(
     const driverKind = snapshot.driver;
     const defaultId = defaultInstanceIdForDriver(driverKind);
     const isDefault = instanceId === defaultId;
+    const icon = resolveProviderInstanceIcon(snapshot.instanceIcon) ?? undefined;
     return {
       instanceId,
       driverKind,
       displayName: resolveProviderInstanceDisplayName(snapshot),
       accentColor: normalizeProviderAccentColor(snapshot.accentColor),
+      ...(icon ? { icon } : {}),
       ...(driverKind === "acpRegistry" && snapshot.iconUrl
         ? { acpRegistryIconUrl: snapshot.iconUrl }
         : {}),
@@ -193,29 +198,56 @@ export function applyProviderInstanceSettings(
       : entry.isDefault
         ? isUnconfiguredDefaultInstanceEnabled(entry.instanceId)
         : false;
+    // Settings are the source of truth. A snapshot can still be advertising
+    // the previous icon until the instance restarts.
+    const icon = explicitInstance
+      ? (resolveProviderInstanceIcon(explicitInstance.icon) ?? undefined)
+      : entry.icon;
+    const next = withProviderInstanceIcon(
+      enabled === entry.enabled ? entry : { ...entry, enabled },
+      icon,
+    );
     if (entry.driverKind !== "acpRegistry" || explicitInstance === undefined) {
-      return enabled === entry.enabled ? entry : { ...entry, enabled };
+      return next;
     }
     const config =
       explicitInstance.config !== null && typeof explicitInstance.config === "object"
         ? (explicitInstance.config as Readonly<Record<string, unknown>>)
         : null;
     if (config?.source === "local") {
-      return { ...entry, enabled, acpRegistryAgentId: undefined, acpRegistryIconUrl: undefined };
+      return withProviderInstanceIcon(
+        { ...entry, enabled, acpRegistryAgentId: undefined, acpRegistryIconUrl: undefined },
+        icon,
+      );
     }
     const agentId = config?.agentId;
     const iconUrl = config?.registryIconUrl;
-    return {
-      ...entry,
-      enabled,
-      ...(typeof agentId === "string" && agentId.trim()
-        ? { acpRegistryAgentId: agentId.trim() }
-        : {}),
-      ...(typeof iconUrl === "string" && iconUrl.trim()
-        ? { acpRegistryIconUrl: iconUrl.trim() }
-        : {}),
-    };
+    return withProviderInstanceIcon(
+      {
+        ...entry,
+        enabled,
+        ...(typeof agentId === "string" && agentId.trim()
+          ? { acpRegistryAgentId: agentId.trim() }
+          : {}),
+        ...(typeof iconUrl === "string" && iconUrl.trim()
+          ? { acpRegistryIconUrl: iconUrl.trim() }
+          : {}),
+      },
+      icon,
+    );
   });
+}
+
+function withProviderInstanceIcon(
+  entry: ProviderInstanceEntry,
+  icon: string | undefined,
+): ProviderInstanceEntry {
+  if (entry.icon === icon) return entry;
+  if (icon === undefined) {
+    const { icon: _omit, ...rest } = entry;
+    return rest;
+  }
+  return { ...entry, icon };
 }
 
 /**

@@ -92,6 +92,31 @@ describe("mobile model options", () => {
     });
   });
 
+  it("carries a local instance icon without treating it as a registry icon", () => {
+    const instanceIcon = "data:image/png;base64,AAAA";
+    const config = {
+      providers: [
+        {
+          instanceId: "grok_bot",
+          driver: "acpRegistry",
+          displayName: "Fred",
+          instanceIcon,
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [{ slug: "default", name: "Default", isCustom: false, capabilities: null }],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    const [group] = groupByProvider(buildModelOptions(config, null));
+    expect(group?.models[0]).toMatchObject({
+      providerDriver: "acpRegistry",
+      providerInstanceIcon: instanceIcon,
+    });
+    expect(group?.models[0]?.providerIconUrl).toBeUndefined();
+  });
+
   it("distinguishes same-name OpenCode models without changing their routing", () => {
     const sources = [
       { id: "anthropic", label: "Anthropic" },

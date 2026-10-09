@@ -1,19 +1,36 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
+import { ServerSettings } from "./settings.ts";
 import {
+  PROVIDER_INSTANCE_ICON_MAX_CHARS,
+  PROVIDER_INSTANCE_ICON_MAX_DECODED_BYTES,
   ProviderDriverKind,
   ProviderInstanceConfig,
   ProviderInstanceConfigMap,
+  ProviderInstanceIcon,
   ProviderInstanceId,
   ProviderInstanceRef,
+  resolveProviderInstanceIcon,
 } from "./providerInstance.ts";
 
 const decodeProviderDriverKind = Schema.decodeUnknownSync(ProviderDriverKind);
 const decodeProviderInstanceId = Schema.decodeUnknownSync(ProviderInstanceId);
 const decodeProviderInstanceRef = Schema.decodeUnknownSync(ProviderInstanceRef);
 const decodeProviderInstanceConfig = Schema.decodeUnknownSync(ProviderInstanceConfig);
+const encodeProviderInstanceConfig = Schema.encodeSync(ProviderInstanceConfig);
 const decodeProviderInstanceConfigMap = Schema.decodeUnknownSync(ProviderInstanceConfigMap);
+const decodeProviderInstanceIcon = Schema.decodeUnknownSync(ProviderInstanceIcon);
+const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
+
+const PNG_ICON = "data:image/png;base64,AAAA";
+const SVG_ICON = "data:image/svg+xml;base64,PHN2Zy8+";
+
+function oversizedDataIcon(): string {
+  const decodedBytes = PROVIDER_INSTANCE_ICON_MAX_DECODED_BYTES + 1;
+  const payloadLength = Math.ceil(decodedBytes / 3) * 4;
+  return `data:image/png;base64,${"A".repeat(payloadLength)}`;
+}
 
 describe("provider slug validation (shared by driver + instance ids)", () => {
   const cases = [
@@ -168,6 +185,59 @@ describe("ProviderInstanceConfig", () => {
   it("rejects driver values that do not satisfy the slug pattern", () => {
     expect(() => decodeProviderInstanceConfig({ driver: "" })).toThrow();
     expect(() => decodeProviderInstanceConfig({ driver: "has spaces" })).toThrow();
+  });
+});
+
+describe("ProviderInstanceIcon", () => {
+  it("accepts base64 PNG and SVG data URIs and https URLs", () => {
+    expect(decodeProviderInstanceIcon(PNG_ICON)).toBe(PNG_ICON);
+    expect(decodeProviderInstanceIcon(`  ${SVG_ICON}  `)).toBe(SVG_ICON);
+    expect(decodeProviderInstanceIcon("HTTPS://cdn.example.com/fred.png")).toBe(
+      "https://cdn.example.com/fred.png",
+    );
+    expect(resolveProviderInstanceIcon(PNG_ICON)).toBe(PNG_ICON);
+  });
+
+  it("round-trips through a provider instance and through settings when absent", () => {
+    const decoded = decodeProviderInstanceConfig({
+      driver: "acpRegistry",
+      displayName: "Fred",
+      icon: PNG_ICON,
+    });
+    expect(decoded.icon).toBe(PNG_ICON);
+    expect(encodeProviderInstanceConfig(decoded).icon).toBe(PNG_ICON);
+
+    const withoutIcon = decodeProviderInstanceConfig({ driver: "codex", accentColor: "#dc2626" });
+    expect(withoutIcon.icon).toBeUndefined();
+    expect(encodeProviderInstanceConfig(withoutIcon)).not.toHaveProperty("icon");
+
+    const settings = decodeServerSettings({
+      providerInstances: {
+        grok_bot: { driver: "acpRegistry", displayName: "Fred", icon: SVG_ICON },
+        codex: { driver: "codex" },
+      },
+    });
+    expect(settings.providerInstances[ProviderInstanceId.make("grok_bot")]?.icon).toBe(SVG_ICON);
+    expect(settings.providerInstances[ProviderInstanceId.make("codex")]?.icon).toBeUndefined();
+  });
+
+  it.each([
+    ["javascript URL", "javascript:alert(1)"],
+    ["http URL", "http://cdn.example.com/fred.png"],
+    ["credentialed https URL", "https://user:secret@cdn.example.com/fred.png"],
+    ["html data URI", "data:text/html;base64,PHNjcmlwdD4="],
+    ["unencoded svg data URI", "data:image/svg+xml,<svg onload='alert(1)'></svg>"],
+    ["non-base64 png data URI", "data:image/png,not-base64"],
+    ["empty string", ""],
+    ["oversized data URI", oversizedDataIcon()],
+    [
+      "oversized https URL",
+      `https://cdn.example.com/${"a".repeat(PROVIDER_INSTANCE_ICON_MAX_CHARS)}`,
+    ],
+  ])("rejects %s", (_label, value) => {
+    expect(resolveProviderInstanceIcon(value)).toBeNull();
+    expect(() => decodeProviderInstanceIcon(value)).toThrow();
+    expect(() => decodeProviderInstanceConfig({ driver: "acpRegistry", icon: value })).toThrow();
   });
 });
 

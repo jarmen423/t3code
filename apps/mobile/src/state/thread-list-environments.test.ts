@@ -139,6 +139,7 @@ describe("thread list environment projection", () => {
     ["displayName", "Work account"],
     ["accentColor", "#123456"],
     ["iconUrl", "https://example.test/icon.png"],
+    ["instanceIcon", "data:image/png;base64,AAAA"],
   ] as const)(
     "updates and restores provider %s without changing another environment's providers",
     (key, value) => {

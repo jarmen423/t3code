@@ -19,6 +19,7 @@ import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "
 import {
   isProviderDriverKind,
   resolveProviderInstanceEnabled,
+  resolveProviderInstanceIcon,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type ProviderInstanceId,
@@ -54,6 +55,7 @@ import { deriveProviderSettingsFields, ProviderSettingsForm } from "./ProviderSe
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
+import { ProviderInstanceIconPicker } from "./ProviderInstanceIconPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
@@ -678,6 +680,14 @@ export function ProviderInstanceCard({
     );
   };
 
+  const updateIcon = (value: string) => {
+    const icon = resolveProviderInstanceIcon(value);
+    const { icon: _omit, ...rest } = instance;
+    onUpdate(
+      icon ? ({ ...rest, icon } as ProviderInstanceConfig) : (rest as ProviderInstanceConfig),
+    );
+  };
+
   const updateConfig = (nextConfig: Record<string, unknown> | undefined) => {
     const { config: _omit, ...rest } = instance;
     onUpdate(
@@ -734,6 +744,7 @@ export function ProviderInstanceCard({
       driverKind={driverKind ?? instance.driver}
       displayName={displayName}
       accentColor={accentColor}
+      instanceIcon={instance.icon}
       acpRegistryAgentId={
         readConfigString(instance.config, "source") === "local"
           ? undefined
@@ -1075,6 +1086,11 @@ export function ProviderInstanceCard({
                 readOnly && "opacity-50 select-none",
               )}
             >
+              <ProviderInstanceIconPicker
+                displayName={displayName}
+                value={instance.icon}
+                onCommit={updateIcon}
+              />
               <ProviderAccentColorPicker
                 layout="inline"
                 displayName={displayName}

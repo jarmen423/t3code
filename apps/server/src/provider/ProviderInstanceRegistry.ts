@@ -204,6 +204,7 @@ const buildEntry = <R>(input: {
           instanceId,
           displayName: entry.displayName,
           accentColor: entry.accentColor,
+          icon: entry.icon,
           reason: `Driver '${entry.driver}' is not registered in this build.`,
         }),
       };
@@ -226,6 +227,7 @@ const buildEntry = <R>(input: {
           instanceId,
           displayName: entry.displayName,
           accentColor: entry.accentColor,
+          icon: entry.icon,
           reason: `Invalid config for instance '${rawInstanceId}': ${detail}`,
         }),
       };
@@ -264,15 +266,19 @@ const buildEntry = <R>(input: {
           instanceId,
           displayName: entry.displayName,
           accentColor: entry.accentColor,
+          icon: entry.icon,
           reason: `Driver '${entry.driver}' failed to create instance: ${createResult.failure.detail}`,
         }),
       };
     }
 
+    const created = createResult.success;
     return {
       kind: "live" as const,
       live: {
-        instance: createResult.success,
+        // Drivers publish snapshots without knowing about instance icons.
+        // Keep the setting on the instance so the aggregator can stamp it.
+        instance: entry.icon ? { ...created, icon: entry.icon } : created,
         scope: childScope,
         entry,
       },
