@@ -10,24 +10,25 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
+import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeHermesTextGeneration } from "../../textGeneration/HermesTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeForkAcpAdapterV2 } from "../../orchestration-v2/Adapters/ForkAcpAdapterV2.ts";
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
-import { makeHermesProvider, type HermesProbeResult } from "../Layers/HermesProvider.ts";
-import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { makeHermesProvider, type HermesProbeResult } from "../HermesProvider.ts";
+import { ProviderEventLoggers } from "../ProviderEventLoggers.ts";
 import { makeHermesAcpRuntime, resolveHermesAuthMethodId } from "../acp/HermesAcpSupport.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
   type ProviderInstance,
-} from "../ProviderDriver.ts";
+} from "@t3tools/provider-core/server/driver";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
-import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 
 const DRIVER = ProviderDriverKind.make("hermes");
 const decodeHermesSettings = Schema.decodeSync(HermesSettings);
@@ -38,6 +39,7 @@ const MAINTENANCE_CAPABILITIES = makeManualOnlyProviderMaintenanceCapabilities({
 });
 
 export type HermesDriverEnv =
+  | ProviderHost
   | IdAllocator.IdAllocatorV2
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner

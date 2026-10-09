@@ -11,25 +11,26 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
+import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeDevinTextGeneration } from "../../textGeneration/DevinTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeForkAcpAdapterV2 } from "../../orchestration-v2/Adapters/ForkAcpAdapterV2.ts";
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
-import { makeDevinProvider, type DevinProbeResult } from "../Layers/DevinProvider.ts";
-import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { makeDevinProvider, type DevinProbeResult } from "../DevinProvider.ts";
+import { ProviderEventLoggers } from "../ProviderEventLoggers.ts";
 import { makeDevinAcpRuntime, probeDevinAuthStatus } from "../acp/DevinAcpSupport.ts";
-import { spawnAndCollect } from "../providerSnapshot.ts";
+import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
   type ProviderInstance,
-} from "../ProviderDriver.ts";
+} from "@t3tools/provider-core/server/driver";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
-import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 
 const DRIVER = ProviderDriverKind.make("devin");
 const decodeDevinSettings = Schema.decodeSync(DevinSettings);
@@ -40,6 +41,7 @@ const MAINTENANCE_CAPABILITIES = makeManualOnlyProviderMaintenanceCapabilities({
 });
 
 export type DevinDriverEnv =
+  | ProviderHost
   | IdAllocator.IdAllocatorV2
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner

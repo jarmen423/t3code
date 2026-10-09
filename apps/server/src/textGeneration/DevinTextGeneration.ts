@@ -6,23 +6,9 @@ import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpErrors from "effect-acp/errors";
 
-import { type DevinSettings, type ModelSelection } from "@t3tools/contracts";
-import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
-import { extractJsonObject } from "@t3tools/shared/schemaJson";
+import { type DevinSettings, TextGenerationError } from "@t3tools/contracts";
 
-import { TextGenerationError } from "@t3tools/contracts";
-import * as TextGeneration from "./TextGeneration.ts";
-import {
-  buildBranchNamePrompt,
-  buildCommitMessagePrompt,
-  buildPrContentPrompt,
-  buildThreadTitlePrompt,
-} from "./TextGenerationPrompts.ts";
-import {
-  sanitizeCommitSubject,
-  sanitizePrTitle,
-  sanitizeThreadTitle,
-} from "./TextGenerationUtils.ts";
+import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import {
   applyDevinAcpModelSelection,
   makeDevinAcpRuntime,
@@ -40,24 +26,9 @@ export const makeDevinTextGeneration = Effect.fn("makeDevinTextGeneration")(func
   const crypto = yield* Crypto.Crypto;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-  const runDevinJson = <S extends Schema.Top>({
-    operation,
-    cwd,
-    prompt,
-    outputSchemaJson,
-    modelSelection,
-  }: {
-    operation:
-      | "generateCommitMessage"
-      | "generatePrContent"
-      | "generateBranchName"
-      | "generateThreadTitle";
-    cwd: string;
-    prompt: string;
-    outputSchemaJson: S;
-    modelSelection: ModelSelection;
-  }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
-    Effect.gen(function* () {
+  const runDevinJson: TextGenerationOperations.Runner = (request) => {
+    const { operation, cwd, prompt, modelSelection } = request;
+    return Effect.gen(function* () {
       const resolvedModel = resolveDevinAcpBaseModelId(modelSelection.model);
       const outputRef = yield* Ref.make("");
       const runtime = yield* makeDevinAcpRuntime({
@@ -133,19 +104,7 @@ export const makeDevinTextGeneration = Effect.fn("makeDevinTextGeneration")(func
         });
       }
 
-      const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson));
-      return yield* decodeOutput(extractJsonObject(trimmed)).pipe(
-        Effect.catchTags({
-          SchemaError: (cause) =>
-            Effect.fail(
-              new TextGenerationError({
-                operation,
-                detail: "Devin Agent returned invalid structured output.",
-                cause,
-              }),
-            ),
-        }),
-      );
+      return yield* TextGenerationOperations.decodeJsonReply(request, "Devin Agent", trimmed);
     }).pipe(
       Effect.mapError((cause) =>
         isTextGenerationError(cause)
@@ -158,105 +117,7 @@ export const makeDevinTextGeneration = Effect.fn("makeDevinTextGeneration")(func
       ),
       Effect.scoped,
     );
+  };
 
-  const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
-    Effect.fn("DevinTextGeneration.generateCommitMessage")(function* (input) {
-      const { prompt, outputSchema } = buildCommitMessagePrompt({
-        branch: input.branch,
-        stagedSummary: input.stagedSummary,
-        stagedPatch: input.stagedPatch,
-        includeBranch: input.includeBranch === true,
-        policy: input.policy,
-      });
-
-      const generated = yield* runDevinJson({
-        operation: "generateCommitMessage",
-        cwd: input.cwd,
-        prompt,
-        outputSchemaJson: outputSchema,
-        modelSelection: input.modelSelection,
-      });
-
-      return {
-        subject: sanitizeCommitSubject(generated.subject),
-        body: generated.body.trim(),
-        ...("branch" in generated && typeof generated.branch === "string"
-          ? { branch: sanitizeFeatureBranchName(generated.branch) }
-          : {}),
-      };
-    });
-
-  const generatePrContent: TextGeneration.TextGeneration["Service"]["generatePrContent"] =
-    Effect.fn("DevinTextGeneration.generatePrContent")(function* (input) {
-      const { prompt, outputSchema } = buildPrContentPrompt({
-        baseBranch: input.baseBranch,
-        headBranch: input.headBranch,
-        commitSummary: input.commitSummary,
-        diffSummary: input.diffSummary,
-        diffPatch: input.diffPatch,
-        policy: input.policy,
-        changeRequestTemplate: input.changeRequestTemplate,
-      });
-
-      const generated = yield* runDevinJson({
-        operation: "generatePrContent",
-        cwd: input.cwd,
-        prompt,
-        outputSchemaJson: outputSchema,
-        modelSelection: input.modelSelection,
-      });
-
-      return {
-        title: sanitizePrTitle(generated.title),
-        body: generated.body.trim(),
-      };
-    });
-
-  const generateBranchName: TextGeneration.TextGeneration["Service"]["generateBranchName"] =
-    Effect.fn("DevinTextGeneration.generateBranchName")(function* (input) {
-      const { prompt, outputSchema } = buildBranchNamePrompt({
-        message: input.message,
-        attachments: input.attachments,
-      });
-
-      const generated = yield* runDevinJson({
-        operation: "generateBranchName",
-        cwd: input.cwd,
-        prompt,
-        outputSchemaJson: outputSchema,
-        modelSelection: input.modelSelection,
-      });
-
-      return {
-        branch: sanitizeBranchFragment(generated.branch),
-      };
-    });
-
-  const generateThreadTitle: TextGeneration.TextGeneration["Service"]["generateThreadTitle"] =
-    Effect.fn("DevinTextGeneration.generateThreadTitle")(function* (input) {
-      const { prompt, outputSchema } = buildThreadTitlePrompt({
-        message: input.message,
-        previousTitle: input.previousTitle,
-        attachments: input.attachments,
-      });
-
-      const generated = yield* runDevinJson({
-        operation: "generateThreadTitle",
-        cwd: input.cwd,
-        prompt,
-        outputSchemaJson: outputSchema,
-        modelSelection: input.modelSelection,
-      });
-
-      return {
-        title: sanitizeThreadTitle(generated.title),
-      } satisfies TextGeneration.ThreadTitleGenerationResult;
-    });
-
-  return {
-    generateCommitMessage,
-    generatePrContent,
-    generateBranchName,
-    generateThreadTitle,
-  } satisfies TextGeneration.TextGeneration["Service"];
+  return TextGenerationOperations.fromRunner("DevinTextGeneration", runDevinJson);
 });

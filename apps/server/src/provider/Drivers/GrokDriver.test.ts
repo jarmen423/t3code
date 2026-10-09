@@ -12,12 +12,13 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
 import { GrokDriver } from "./GrokDriver.ts";
 
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderHostLive from "../ProviderHostLive.ts";
 
-const testLayer = ServerConfig.layerTest(process.cwd(), {
+const layerDeps = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-grok-driver-update-",
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -41,6 +42,7 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
     ),
   ),
 );
+const layerTest = ProviderHostLive.layer.pipe(Layer.provideMerge(layerDeps));
 
 const noSpawner = ChildProcessSpawner.make(() =>
   Effect.die("Disabled Grok must not spawn a process"),
@@ -49,7 +51,7 @@ const noSpawner = ChildProcessSpawner.make(() =>
 // The `#!/bin/sh` stub below cannot be resolved as an executable on Windows.
 const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 
-it.layer(testLayer)("GrokDriver", (it) => {
+it.layer(layerTest)("GrokDriver", (it) => {
   it.effect.skipIf(windowsHost)("updates through the configured executable's own updater", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

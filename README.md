@@ -2,10 +2,9 @@
 
 > [!NOTE]
 > **Community fork** tracking [pingdotgg/t3code](https://github.com/pingdotgg/t3code). This fork adds
-> **[Hermes Agent](https://hermes-agent.nousresearch.com), [Devin](https://docs.devin.ai/cli), and
-> [Muse Code](https://meta-models.github.io/muse-code-sdk/) as ACP providers** — configured model
-> catalogs in the picker, provider slash commands, native approval modes, and Muse's interactive
-> questions with free-form answers.
+> **[Hermes Agent](https://hermes-agent.nousresearch.com) and [Devin](https://docs.devin.ai/cli)
+> as ACP providers** — configured model catalogs in the picker, provider slash commands, and native
+> approval modes.
 >
 > Unsigned Windows, Linux, and `t3` CLI builds: **[Releases](https://github.com/jarmen423/t3code/releases)**
 
@@ -103,6 +102,7 @@ Full docs live in [docs/](./docs). There's no docs site yet.
 - [Project settings](./docs/user/project-settings.md)
 - [Appearance preferences](./docs/user/appearance.md)
 - [Remote access from a phone or another machine](./docs/user/remote-access.md)
+- [Connect Claude Code, Codex, ChatGPT and other agents over MCP](./docs/user/outside-agents.md)
 - [Keeping app and server in sync](./docs/user/updating.md)
 - [Source control integrations](./docs/user/source-control.md)
 - Multiple accounts: [Codex](./docs/user/providers-codex.md) · [Claude](./docs/user/providers-claude.md)

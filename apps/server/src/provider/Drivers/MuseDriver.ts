@@ -1,177 +1,178 @@
 import { MuseSettings, ProviderDriverKind } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
-import * as Deferred from "effect/Deferred";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
+import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
-import type * as EffectAcpSchema from "effect-acp/compat";
 
-import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import { ServerConfig } from "../../config.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
+import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ServerConfig from "../../config.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { makeMuseTextGeneration } from "../../textGeneration/MuseTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeForkAcpAdapterV2 } from "../../orchestration-v2/Adapters/ForkAcpAdapterV2.ts";
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
-import { makeMuseProvider, type MuseProbeResult } from "../Layers/MuseProvider.ts";
-import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
-import { isMuseAuthRequiredError, makeMuseAcpRuntime } from "../acp/MuseAcpSupport.ts";
+import { makeMuseAdapterV2 } from "../../orchestration-v2/Adapters/MuseAdapterV2.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
+import { checkMuseProviderStatus, makePendingMuseProvider } from "../MuseProvider.ts";
+import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
+import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
+import { enrichMuseSnapshot, latestMuseVersion, museMaintenance } from "../museMaintenance.ts";
+import { makeMuseEnvironment } from "../museSdk.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
   type ProviderInstance,
-} from "../ProviderDriver.ts";
+} from "@t3tools/provider-core/server/driver";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import {
+  makeCachedProviderMaintenanceResolution,
+  resolveProviderMaintenanceCapabilitiesEffect,
+} from "@t3tools/provider-core/server/maintenanceResolver";
+import {
+  haveProviderSnapshotSettingsChanged,
+  makeProviderSnapshotSettingsSource,
+  type ProviderSnapshotSettings,
+} from "@t3tools/provider-core/server/snapshotSettings";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
-import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 
-const DRIVER = ProviderDriverKind.make("muse");
+const DRIVER_KIND = ProviderDriverKind.make("muse");
 const decodeMuseSettings = Schema.decodeSync(MuseSettings);
-
-const MAINTENANCE_CAPABILITIES = makeManualOnlyProviderMaintenanceCapabilities({
-  provider: DRIVER,
-  packageName: null,
-});
 
 export type MuseDriverEnv =
   | IdAllocator.IdAllocatorV2
-  | BackgroundPolicy.BackgroundPolicy
+  | ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
   | FileSystem.FileSystem
+  | HttpClient.HttpClient
   | Path.Path
-  | ProviderEventLoggers
-  | ServerConfig
-  | ServerSettingsService;
+  | ProviderEventLoggers.ProviderEventLoggers
+  | ServerConfig.ServerConfig;
 
-/**
- * Muse Code speaks ACP through `muse-acp-bridge`, a thin stdio wrapper around
- * the `muse` CLI. Authentication is host-side (`muse login`); the bridge
- * advertises no ACP auth methods, so the throwaway session the probe opens is
- * also the only credentials check. The process always runs on the host that
- * owns the T3 server — remote and mobile clients only ever see the driver's
- * snapshots and events.
- */
 export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
-  driverKind: DRIVER,
-  metadata: {
-    displayName: "Muse Code",
-    supportsMultipleInstances: true,
-  },
+  driverKind: DRIVER_KIND,
+  metadata: { displayName: "Muse Code", supportsMultipleInstances: true },
   configSchema: MuseSettings,
-  defaultConfig: (): MuseSettings => decodeMuseSettings({}),
+  defaultConfig: () => decodeMuseSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
-      const crypto = yield* Crypto.Crypto;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const serverConfig = yield* ServerConfig;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const httpClient = yield* HttpClient.HttpClient;
+      const host = yield* ProviderHost;
+      const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const { cwd } = serverConfig;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+      const hostEnvironment = yield* HostProcessEnvironment;
+      // Drop an inherited META_API_KEY so Muse uses its login; an instance value still wins.
+      const processEnvironment = mergeProviderInstanceEnvironment(
+        environment,
+        makeMuseEnvironment(hostEnvironment),
+      );
+      const effectiveConfig = {
+        ...config,
+        enabled,
+        binaryPath: expandHomePath(config.binaryPath),
+      } satisfies MuseSettings;
       const continuationIdentity = defaultProviderContinuationIdentity({
-        driverKind: DRIVER,
+        driverKind: DRIVER_KIND,
         instanceId,
       });
       const stampIdentity = withInstanceIdentity({
         instanceId,
-        driverKind: DRIVER,
+        driverKind: DRIVER_KIND,
         displayName,
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
       });
-      const effectiveConfig = { ...config, enabled } satisfies MuseSettings;
-
-      // `initialize` proves the binary is present; the session probe harvests
-      // models, slash commands, and the login signal (`session/new` is where
-      // the host reports authRequired). A non-auth session failure cannot
-      // downgrade a healthy probe.
-      const probe = (includeSessionMetadata: boolean) =>
+      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, host.settings);
+      const resolveInstallation = yield* makeCachedProviderMaintenanceResolution(
+        resolveProviderMaintenanceCapabilitiesEffect(museMaintenance, {
+          binaryPath: effectiveConfig.binaryPath,
+          env: processEnvironment,
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        ),
+      );
+      const resolveMaintenance = (options?: { readonly fresh?: boolean }) =>
         Effect.gen(function* () {
-          const runtime = yield* makeMuseAcpRuntime({
-            museSettings: effectiveConfig,
-            environment: processEnv,
-            childProcessSpawner: spawner,
-            cwd: serverConfig.stateDir,
-            clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
-          }).pipe(Effect.provideService(Crypto.Crypto, crypto));
-          const initialize = yield* runtime.initialize();
-          const session = includeSessionMetadata
-            ? yield* Effect.gen(function* () {
-                // Commands arrive as an `available_commands_update` session
-                // notification rather than on the `session/new` response, so
-                // the events stream is drained for it alongside the start.
-                const probeScope = yield* Effect.scope;
-                const commandsDeferred =
-                  yield* Deferred.make<ReadonlyArray<EffectAcpSchema.AvailableCommand>>();
-                yield* Stream.runForEach(runtime.getEvents(), (event) =>
-                  event._tag === "AvailableCommandsUpdated"
-                    ? Deferred.succeed(commandsDeferred, event.availableCommands)
-                    : Effect.void,
-                ).pipe(Effect.forkIn(probeScope));
-                const started = yield* runtime.start();
-                const commands = yield* Deferred.await(commandsDeferred).pipe(
-                  Effect.timeoutOption("3 seconds"),
-                  Effect.map(Option.getOrUndefined),
-                );
-                return { setup: started.sessionSetupResult, commands } as const;
-              }).pipe(
-                Effect.match({
-                  onFailure: (cause) =>
-                    isMuseAuthRequiredError(cause)
-                      ? ({ authRequired: true } as const)
-                      : ({ failed: true } as const),
-                  onSuccess: (value) => value,
-                }),
+          const capabilities = yield* resolveInstallation(options);
+          // The maintenance runner requests fresh capabilities around an explicit update
+          // and needs the native target version to verify that the command actually upgraded.
+          const latestVersion = options?.fresh
+            ? yield* latestMuseVersion(processEnvironment, { fresh: true }).pipe(
+                Effect.provideService(HttpClient.HttpClient, httpClient),
               )
             : undefined;
-          return {
-            initialize,
-            session,
-          } satisfies MuseProbeResult;
-        }).pipe(Effect.scoped);
-
-      const provider = yield* makeMuseProvider(effectiveConfig, {
-        stampIdentity: (draft) => Effect.sync(() => stampIdentity(draft)),
-        probe,
-        // Text generation needs a working session, which needs host
-        // credentials — the probe's session already established that.
-        supportsTextGeneration: Effect.succeed(true),
-        maintenanceCapabilities: MAINTENANCE_CAPABILITIES,
+          return latestVersion !== undefined ? { ...capabilities, latestVersion } : capabilities;
+        });
+      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<MuseSettings>>({
+        resolveMaintenance,
+        getSettings: snapshotSettings.getSettings,
+        streamSettings: snapshotSettings.streamSettings,
+        haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+        initialSnapshot: (settings) =>
+          makePendingMuseProvider(settings.provider).pipe(Effect.map(stampIdentity)),
+        checkProvider: checkMuseProviderStatus(effectiveConfig, processEnvironment, cwd).pipe(
+          Effect.map(stampIdentity),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        ),
+        enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
+          resolveMaintenance().pipe(
+            Effect.flatMap((maintenanceCapabilities) =>
+              enrichMuseSnapshot({
+                snapshot: currentSnapshot,
+                maintenanceCapabilities,
+                enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+                environment: processEnvironment,
+              }),
+            ),
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.flatMap(publishSnapshot),
+          ),
       }).pipe(
         Effect.mapError(
           (cause) =>
             new ProviderDriverError({
-              driver: DRIVER,
+              driver: DRIVER_KIND,
               instanceId,
-              detail: `Failed to build Muse snapshot: ${cause.message ?? String(cause)}`,
+              detail: "Failed to build Muse Code snapshot.",
               cause,
             }),
         ),
       );
-
-      const orchestrationAdapter = yield* makeForkAcpAdapterV2(
-        { driver: "muse", settings: effectiveConfig },
-        {
-          instanceId,
-          environment: processEnv,
-          onSessionStarted: provider.onSessionStarted,
-          onAvailableCommands: provider.onAvailableCommands,
-          onAuthRequired: provider.onAuthRequired,
-          onUsageLimits: (update) => provider.snapshot.applyUsageLimits(update),
-        },
-      );
-      const textGeneration = yield* makeMuseTextGeneration(effectiveConfig, processEnv);
-
+      const modelCatalog = snapshot.getSnapshot.pipe(Effect.map((current) => current.models));
+      const orchestrationAdapter = makeMuseAdapterV2({
+        instanceId,
+        settings: effectiveConfig,
+        environment: processEnvironment,
+        idAllocator,
+        serverConfig,
+        fileSystem,
+        modelCatalog,
+        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+        continuationRequests,
+      });
+      const textGeneration = yield* makeMuseTextGeneration(effectiveConfig, {
+        environment: processEnvironment,
+        modelCatalog,
+      });
       return {
         instanceId,
-        driverKind: DRIVER,
+        driverKind: DRIVER_KIND,
         continuationIdentity,
         displayName,
         accentColor,
         enabled,
-        snapshot: provider.snapshot,
+        snapshot,
         orchestrationAdapter,
         textGeneration,
       } satisfies ProviderInstance;

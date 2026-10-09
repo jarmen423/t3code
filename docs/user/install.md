@@ -76,6 +76,15 @@ The `.deb` updates itself like the other desktop builds. It asks for your
 password to install each update. If your desktop has no password prompt, the
 update fails. Download the new `.deb` and install it the same way.
 
+### The `t3` command
+
+The desktop app includes the `t3` command-line tool. To run it from any
+terminal, open **Settings → General → About** and choose **Install** next to
+**t3 command**. On macOS and Linux it adds a `t3` link to a folder on your
+`PATH`; on Windows it adds the app's command folder to your `PATH`. Open a new
+terminal afterwards. **Remove** takes it off again. If you already have `t3`
+from npm, it stays as it is.
+
 ### Windows Subsystem for Linux
 
 Choose a WSL distro in **Settings → Connections** to run agents and projects
@@ -133,10 +142,10 @@ computer.
 | Grok Build  | Install [Grok Build CLI](https://x.ai/cli), then run `grok login`.                                                                                        |
 | Hermes      | Install [Hermes Agent](https://hermes-agent.nousresearch.com), then run `hermes setup`.                                                                   |
 | Devin       | Install [Devin](https://docs.devin.ai/cli), then run `devin auth login`.                                                                                  |
-| Muse Code   | Install [Muse Code](https://meta-models.github.io/muse-code-sdk/) and `muse-acp-bridge`, then run `muse login`.                                           |
 | OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                                                                                  |
 | Antigravity | Install and sign in with Google from T3 Code's provider settings.                                                                                         |
 | Pi          | Install [Pi](https://pi.dev), then run `pi` once to finish its login or API-key setup.                                                                    |
+| Muse Code   | Install [Muse Code](https://dev.meta.ai/docs/muse-code) on the server, run `muse login`, then enable it in Settings → Providers.                          |
 
 Provider CLIs must be on the server's `PATH`. If T3 Code cannot find one, set its
 **Binary path** in provider settings, especially when using a version manager.
@@ -149,9 +158,6 @@ release. Check **Settings → Providers** on that environment for the recommende
 version or range. When its package manager supports installing a specific version,
 you can install the recommendation there. Otherwise use the provider's installer
 on the environment's machine. An unlisted version is unverified.
-
-Muse Code needs both the Muse CLI and `muse-acp-bridge` on that machine. T3 Code
-does not ship the bridge. See [Muse Code](./providers-muse.md).
 
 When a provider CLI is behind its latest release, its provider card shows the
 available version. **Update now** runs the installer that owns the CLI
@@ -168,8 +174,9 @@ their original values.
 
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [Hermes](./providers-hermes.md),
-[Muse Code](./providers-muse.md), [Devin](./providers-devin.md), [OpenCode](./providers-opencode.md), and
-[Antigravity](./providers-antigravity.md), and [Pi](./providers-pi.md).
+[Devin](./providers-devin.md), [OpenCode](./providers-opencode.md),
+[Antigravity](./providers-antigravity.md), [Pi](./providers-pi.md), and
+[Muse Code](./providers-muse.md).
 
 ## Next steps
 

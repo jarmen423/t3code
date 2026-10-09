@@ -22,7 +22,6 @@ const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
 const hermesProfile = process.env.T3_ACP_HERMES === "1";
 const devinProfile = process.env.T3_ACP_DEVIN === "1";
-const museProfile = process.env.T3_ACP_MUSE === "1";
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
@@ -36,8 +35,6 @@ const injectedReportTriggerPath = process.env.T3_ACP_INJECTED_REPORT_TRIGGER_PAT
 const emitBackgroundToolDuringAnswer =
   process.env.T3_ACP_EMIT_BACKGROUND_TOOL_DURING_ANSWER === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
-const emitMuseElicitation = process.env.T3_ACP_EMIT_MUSE_ELICITATION === "1";
-const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const emitElicitation = process.env.T3_ACP_EMIT_ELICITATION === "1";
 const emitMcpToolApprovalElicitation =
   process.env.T3_ACP_EMIT_MCP_TOOL_APPROVAL_ELICITATION === "1";
@@ -131,22 +128,14 @@ const permissionRequestCount = Math.max(
 const sessionId = "mock-session-1";
 
 let currentModeId =
-  antigravityProfile || hermesProfile
-    ? "default"
-    : devinProfile
-      ? "accept-edits"
-      : museProfile
-        ? "auto"
-        : "ask";
+  antigravityProfile || hermesProfile ? "default" : devinProfile ? "accept-edits" : "ask";
 let currentModelId = antigravityProfile
   ? "gemini-test-low"
   : hermesProfile
     ? "openrouter:mock-alpha"
     : devinProfile
       ? "swe-1.5"
-      : museProfile
-        ? "muse-spark-1.3"
-        : "default";
+      : "default";
 let parameterizedModelPicker = false;
 let currentReasoning = "medium";
 let currentContext = "272k";
@@ -246,50 +235,6 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
           { value: "claude-sonnet-4-6-high", name: "Claude Sonnet 4.6 (High)" },
           { value: "gpt-5.4-high", name: "GPT-5.4 (High)" },
           { value: "fusion-sonnet", name: "Fusion Sonnet" },
-        ],
-      },
-    ];
-  }
-  if (museProfile) {
-    // Mirrors the real muse-acp-bridge: mode + model + reasoning_effort
-    // configOptions; no `models` field on session/new.
-    return [
-      {
-        configId: "mode",
-        name: "Mode",
-        category: "mode",
-        type: "select",
-        currentValue: currentModeId,
-        options: availableModes.map((mode) => ({ value: mode.id, name: mode.name })),
-      },
-      {
-        configId: "model",
-        name: "Model",
-        category: "model",
-        type: "select",
-        currentValue: currentModelId,
-        options: [
-          { value: "muse-spark-1.3", name: "Muse Spark 1.3" },
-          { value: "muse-spark-1.3-contributor", name: "Muse Spark 1.3 Contributor" },
-          { value: "muse-spark-1.2", name: "Muse Spark 1.2" },
-          { value: "muse-spark-1.2-contributor", name: "Muse Spark 1.2 Contributor" },
-        ],
-      },
-      {
-        configId: "reasoning_effort",
-        name: "Reasoning Effort",
-        category: "thought_level",
-        type: "select",
-        currentValue: currentReasoning,
-        options: [
-          { value: "none", name: "None" },
-          { value: "minimal", name: "Minimal" },
-          { value: "low", name: "Low" },
-          { value: "medium", name: "Medium" },
-          { value: "high", name: "High" },
-          { value: "xhigh", name: "Extra High" },
-          { value: "max", name: "Max" },
-          { value: "ultra", name: "Ultra" },
         ],
       },
     ];
@@ -509,30 +454,23 @@ const availableModes: ReadonlyArray<AcpCompat.SessionMode> = antigravityProfile
           { id: "plan", name: "Plan" },
           { id: "bypass", name: "Bypass" },
         ]
-      : museProfile
-        ? [
-            { id: "ask", name: "Ask" },
-            { id: "auto", name: "Auto" },
-            { id: "yolo", name: "Yolo" },
-            { id: "deny", name: "Deny" },
-          ]
-        : [
-            {
-              id: "ask",
-              name: "Ask",
-              description: "Request permission before making any changes",
-            },
-            {
-              id: "architect",
-              name: "Architect",
-              description: "Design and plan software systems without implementation",
-            },
-            {
-              id: "code",
-              name: "Code",
-              description: "Write and modify code with full tool access",
-            },
-          ];
+      : [
+          {
+            id: "ask",
+            name: "Ask",
+            description: "Request permission before making any changes",
+          },
+          {
+            id: "architect",
+            name: "Architect",
+            description: "Design and plan software systems without implementation",
+          },
+          {
+            id: "code",
+            name: "Code",
+            description: "Write and modify code with full tool access",
+          },
+        ];
 
 function modeState(): AcpCompat.SessionModeState {
   return {
@@ -565,9 +503,9 @@ function modelState(): AcpCompat.SessionModelState | null {
   if (antigravityProfile) {
     return { currentModelId, availableModels: antigravityModels };
   }
-  // Devin and Muse advertise models through configOptions only, matching the
-  // real agents — session/new carries no `models` field for them.
-  if (devinProfile || museProfile) {
+  // Devin advertises models through configOptions only, matching the real
+  // agent — session/new carries no `models` field for it.
+  if (devinProfile) {
     return null;
   }
   if (hermesProfile) {
@@ -609,21 +547,7 @@ const program = Effect.gen(function* () {
             { name: "bypass", description: "Bypass approvals" },
             { name: "compact", description: "Compact the session" },
           ]
-        : museProfile
-          ? [
-              { name: "help", description: "Show help" },
-              { name: "status", description: "Show session status" },
-              { name: "usage", description: "Show usage" },
-              { name: "models", description: "List models" },
-              { name: "effort", description: "Set reasoning effort" },
-              { name: "tasks", description: "List tasks" },
-              { name: "subagents", description: "List subagents" },
-              { name: "workflows", description: "List workflows" },
-              { name: "recap", description: "Recap the session" },
-              { name: "compact", description: "Compact the session" },
-              { name: "stop", description: "Stop the current turn" },
-            ]
-          : [];
+        : [];
     if (availableCommands.length === 0) {
       return Effect.void;
     }
@@ -671,7 +595,7 @@ const program = Effect.gen(function* () {
         if (process.env.T3_ACP_HERMES_UNCONFIGURED !== "1") {
           authMethods.unshift({ id: "openrouter", name: "OpenRouter" });
         }
-        return {
+        const response: AcpSchema.InitializeResponse = {
           protocolVersion: 2,
           info: { name: "hermes", version: "0.21.1-mock" },
           capabilities: {},
@@ -682,15 +606,14 @@ const program = Effect.gen(function* () {
           })),
           _meta: { modelState: modelState() },
         };
+        return response;
       }
       if (devinProfile) {
         // Mirrors the real `devin acp` initialize payload.
-        return {
+        const response: AcpSchema.InitializeResponse = {
           protocolVersion: 2,
           info: { name: "affogato", title: "Devin Agent", version: "0.0.0-dev" },
-          capabilities: {
-            prompt: { image: true, embeddedContext: true },
-          },
+          capabilities: {},
           authMethods: [{ type: "agent", methodId: "devin-browser", name: "Log in with browser" }],
           _meta: {
             "cognition.ai/sessionRename": true,
@@ -699,19 +622,7 @@ const program = Effect.gen(function* () {
             "cognition.ai/megaplan": true,
           },
         };
-      }
-      if (museProfile) {
-        // Mirrors the real muse-acp-bridge initialize payload: auth lives
-        // host-side (`muse login`), so no authMethods are advertised.
-        return {
-          protocolVersion: 2,
-          info: { name: "muse-acp-bridge", title: "Muse ACP Bridge", version: "0.1.0" },
-          capabilities: {
-            prompt: { image: true, embeddedContext: true },
-            session: { fork: {} },
-          },
-          authMethods: [],
-        };
+        return response;
       }
       return {
         protocolVersion: 2,
@@ -747,11 +658,6 @@ const program = Effect.gen(function* () {
       if (devinProfile && request.methodId !== "devin-browser") {
         return yield* AcpError.AcpRequestError.invalidParams(
           `Mock Devin rejected auth method ${request.methodId}.`,
-        );
-      }
-      if (museProfile) {
-        return yield* AcpError.AcpRequestError.invalidParams(
-          "muse-acp-bridge advertises no auth methods.",
         );
       }
       if (hermesProfile && request.methodId === "hermes-setup") {
@@ -2551,42 +2457,6 @@ const program = Effect.gen(function* () {
           return yield* Effect.never;
         }
 
-        return yield* finishPrompt(requestedSessionId, "end_turn");
-      }
-
-      if (emitMuseElicitation) {
-        // Mirrors the real muse-acp-bridge: MSP userInput questions arrive as
-        // `elicitation/create` with a `header: text` line per question and a
-        // `q{i}` schema property each; only `accept` + `content` counts as an
-        // answer, everything else cancels the host-side question.
-        const result = yield* agent.client.extRequest("elicitation/create", {
-          sessionId: requestedSessionId,
-          mode: "form",
-          message: "Scope: Which scope should Muse use?\nNotes: Anything Muse should keep in mind?",
-          requestedSchema: {
-            type: "object",
-            properties: {
-              q0: { type: "string", enum: ["Workspace", "Session"] },
-              q1: { type: "string" },
-            },
-            required: ["q0"],
-          },
-        });
-        const encodedResult = yield* encodeUnknownJson(result).pipe(
-          Effect.mapError(() =>
-            AcpError.AcpRequestError.internalError("Could not encode elicitation result."),
-          ),
-        );
-        yield* agent.client.sessionUpdate({
-          sessionId: requestedSessionId,
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: {
-              type: "text",
-              text: `elicitation:${encodedResult}`,
-            },
-          },
-        });
         return yield* finishPrompt(requestedSessionId, "end_turn");
       }
 

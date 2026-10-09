@@ -48,7 +48,7 @@ mint responses also bind the credential to the client proof key. The relay
 verifies those bindings before returning a credential. This prevents a different
 process behind the tunnel from impersonating the linked environment. The checks
 meet in the
-[environment cloud handlers](../../apps/server/src/cloud/http.ts) and
+[environment link service](../../apps/server/src/cloud/CloudLink.ts) and
 [relay connector](../../infra/relay/src/environments/EnvironmentConnector.ts).
 
 The relay holds the signing authority for mint requests. DPoP protects an honest
@@ -80,7 +80,7 @@ Two cases must retain the tunnel across shutdown. A link installed through a
 client has no startup provisioning path and depends on its stored connector
 token. An update handoff immediately starts a replacement server, and replacing
 the tunnel would add routing propagation delay to every update. These exceptions
-belong to [shutdown handling](../../apps/server/src/cloud/http.ts).
+belong to [shutdown handling](../../apps/server/src/cloud/CloudLink.ts).
 
 Release and unlink claim the allocation generation before deleting external
 resources. A delayed cleanup must not delete a tunnel reused by a concurrent
@@ -129,6 +129,30 @@ provisions under the same allocation, so the hostname and DNS record survive
 and clients keep their bindings. Every mutation on an allocation bumps its
 `generation`, and deletion locks the row at the generation it claimed, so a
 host that reconnects mid-sweep wins.
+
+## The relay client follows the server's pin
+
+The host runs `cloudflared` pinned by `CLOUDFLARED_VERSION` in
+[`relayClient.ts`](../../packages/shared/src/relayClient.ts), and bumping it there
+(version, URLs, and checksums) is the whole release step. A linked host that
+starts a server with a new pin keeps its connector up on the newest older managed
+release, installs the pinned one in the background, then restarts only the
+connector child on it. If that restart fails to spawn, the host requests recovery
+as it would for an exited connector. A host with no relay client installs one
+first. A `cloudflared` on `PATH` or an explicit `T3CODE_CLOUDFLARED_PATH` is the
+user's choice and is never replaced, since linking asks before downloading.
+
+Once the pinned release registers a connection, managed releases older than the
+pin are deleted except the newest of them. That one, and any newer release, can
+belong to another server sharing the same T3 home, such as a rollback after a
+failed update, which could not run again without it.
+
+The version comes from running `cloudflared version`, not from the folder name.
+Connectors from before `--no-autoupdate` replaced themselves in place, so a
+managed folder can hold another release. Such a binary still runs as a fallback
+while the pin installs. Every binary needs `CLOUDFLARED_MIN_VERSION`, the oldest
+release that accepts every flag the connector is started with. Raise it whenever
+a new flag is added.
 
 ## OAuth traps
 

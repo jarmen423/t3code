@@ -1,83 +1,67 @@
 # Muse Code
 
-T3 Code runs [Muse Code](https://meta-models.github.io/muse-code-sdk/) through
-`muse-acp-bridge`, a small adapter that speaks ACP over stdio. Muse manages its
-own credentials — T3 Code uses whatever account `muse login` signed in on the
-server machine.
+Muse Code is a beta integration and is disabled by default. Install
+[Muse Code](https://dev.meta.ai/docs/muse-code) on the machine hosting your
+environment, then run `muse login` as the account that runs T3 Code.
 
-Muse support is experimental and off by default.
+Open **Settings → Providers** in the web or desktop app, select the environment,
+and enable **Muse Code**. Set **Binary path** if Muse is not on the host's `PATH`.
+Refresh provider status after installation or login, then select Muse in a
+thread's model picker.
 
-## Set up Muse Code
+Provider status does not check your login. If you are signed out, messages
+fail until you run `muse login` on the host.
 
-T3 Code does not include `muse-acp-bridge`. Install Muse Code and that bridge on the machine that runs the T3 Code server, then sign in from a terminal on that machine:
+## Sign-in and API keys
 
-```bash
-muse login
-```
+T3 Code ignores a `META_API_KEY` that the T3 server inherits from its own
+environment, so Muse uses the credential saved on the host by `muse login`. To
+use an API key instead, add `META_API_KEY` to the Muse instance's environment
+variables in **Settings → Providers**. Muse gives that key priority over the
+saved login.
 
-`muse login` is an interactive terminal flow. It cannot run inside T3 Code. Until it completes, the Muse Code provider card shows that setup is required. Once the host is signed in, T3 Code picks that up automatically. There is no separate sign-in button.
+## Remote access and instances
 
-`muse-acp-bridge` and `muse-bridge` are different programs. T3 Code launches `muse-acp-bridge`. `muse-bridge` is an HTTP server for Hermes and Codex.
+Connect from web, desktop, or mobile through [remote access](./remote-access.md).
+Muse uses the selected environment's files and login; connecting devices do not
+need Muse installed. Install and sign in separately on each host where you want
+Muse to run.
 
-On macOS and Linux, enable Muse Code in **Settings → Providers**. Put `muse-acp-bridge` on `PATH`, or set **Binary path** (for example `~/.local/bin/muse-acp-bridge`).
-
-On Windows, install the native Muse CLI, then download the bridge into the same folder. The release file is already named `muse-acp-bridge.exe`.
-
-```powershell
-irm https://dev.meta.ai/install.ps1 | iex
-$dir = "$env:LOCALAPPDATA\Programs\muse"
-Invoke-WebRequest https://github.com/jarmen423/muse-client-bridge/releases/download/v0.1.2/muse-acp-bridge.exe -OutFile "$dir\muse-acp-bridge.exe"
-```
-
-Open a new terminal and run `muse login`. Enable Muse Code in **Settings → Providers**. Leave **Binary path** as `muse-acp-bridge`.
+Add a provider instance for a separate configuration. Instances on the same host
+share its Muse login; give an instance its own `META_API_KEY` to bill it
+separately. Existing conversations retain their instance when its model catalog
+becomes unavailable.
 
 ## Models
 
-The model picker's **Muse configured model** entry keeps whatever model Muse
-Code is configured with. Entries below it are the models the bridge advertises,
-such as `muse-spark-1.3`. Models also share a **Reasoning** picker with levels
-from `none` up to `ultra`; changing it applies immediately to the running
-session.
+Models and reasoning choices come from Muse on the selected host. After changing
+Muse configuration, refresh provider status in **Settings → Providers**. On
+mobile, pull down in thread settings to refresh models. If a saved model becomes
+unavailable, select an available model before sending another message.
 
-## Permission modes
+Muse can list models that your account cannot use. If a message fails with
+"does not exist or you lack access", pick another model, or add one your account
+can use under **Custom models** in the instance settings.
 
-T3 Code's interaction modes map to Muse's session modes:
+## Permissions and limitations
 
-| T3 Code mode      | Muse mode |
-| ----------------- | --------- |
-| Supervised, Plan  | `ask`     |
-| Auto              | `ask`     |
-| Auto-accept edits | `ask`     |
-| Full access       | `auto`    |
+Muse offers two [permission modes](./permission-modes.md): **Supervised** asks
+before commands and edits, and **Full access** runs them without asking. Muse has
+no equivalent of **Auto-accept edits** or **Auto**, so they are not offered. Muse
+does not offer a separate Plan mode in T3 Code.
 
-T3 Code never selects Muse's `yolo` mode: it also suppresses Muse's structured
-questions, which permission modes are not meant to prevent. Auto-accept edits
-therefore runs the session in `ask` and answers only file-change approvals
-(edits, deletions, and moves) by itself — commands, reads, and anything Muse
-labels otherwise still ask, and structured questions are always surfaced. Full
-access runs in `auto`, which allows tools to proceed while questions stay
-available.
+Muse can use T3 Code's tools. If Muse cannot reach them, the turn continues
+without them. Switching providers can pass conversation context as a handoff.
 
-If the bridge advertises no mode that can enforce the requested level (for
-example only `auto` and `yolo` while Supervised is requested), starting or
-continuing a turn fails instead of running with a more permissive mode than
-asked for.
+Muse skills do not appear in the composer's `$` menu. Muse still loads them
+itself. Manage them with `muse skills` on the host.
 
-Tool approval prompts offer only the choices Muse actually supports for that
-action, and "allow for this session" is remembered per operation.
+Forking a Muse conversation starts a new session with a copy of the conversation
+context. Conversation rewind is unavailable.
 
-## Structured questions
+Install Muse and sign in on the host; in-app installation and sign-in are not
+available. Updates can run from **Settings → Providers** when T3 Code recognizes
+the Muse launcher; otherwise update Muse on that host manually.
 
-Muse can ask structured questions — scope pickers and short forms — while it
-works. They appear as T3 Code's question cards, with a free-text answer always
-allowed alongside the offered choices. Dismissing a card cancels the question
-on the Muse side rather than guessing an answer.
-
-## Notes
-
-- Threads cannot be rolled back inside Muse — start a new thread instead.
-- The composer shows whatever slash commands Muse advertises — `/compact`,
-  `/models`, `/effort`, `/status`, and the rest — plus T3 Code's own built-ins.
-  `/compact` is the compact-conversation command.
-- The mobile app drives Muse through the connected server; Muse never runs on
-  the phone itself.
+To stop using Muse in an environment, disable it in **Settings → Providers**.
+This keeps the host's Muse login, thread history, and workspace files.

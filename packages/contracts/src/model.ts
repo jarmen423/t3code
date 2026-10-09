@@ -171,6 +171,9 @@ export const DEFAULT_TEXT_GENERATION_MODEL = "gpt-6-luna";
 export const ANTIGRAVITY_DEFAULT_MODEL = "antigravity-default";
 export const DEFAULT_TEXT_GENERATION_REASONING_EFFORT = "low";
 
+/** Let Muse pick the account's default model. Never send this ID to Muse. */
+export const MUSE_DEFAULT_MODEL = "default";
+
 export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
   [CODEX_DRIVER_KIND]: DEFAULT_MODEL,
   [CLAUDE_DRIVER_KIND]: "claude-fable-5-1",
@@ -183,9 +186,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   // Product slug, not an ACP model id. The Devin adapter treats it as "keep the
   // model Devin is configured with" and skips the model config option for it.
   [DEVIN_DRIVER_KIND]: "default",
-  // Product slug, not an ACP model id. The Muse adapter treats it as "keep the
-  // model Muse is configured with" and skips the model config option for it.
-  [MUSE_DRIVER_KIND]: "default",
+  [MUSE_DRIVER_KIND]: MUSE_DEFAULT_MODEL,
   [ACP_REGISTRY_DRIVER_KIND]: "default",
   // "default" defers to the user's own Pi settings.json model selection.
   [PI_DRIVER_KIND]: "default",
@@ -201,7 +202,6 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [ProviderDriverKind.make("antigravity")]: ANTIGRAVITY_DEFAULT_MODEL,
   [HERMES_DRIVER_KIND]: "default",
   [DEVIN_DRIVER_KIND]: "default",
-  [MUSE_DRIVER_KIND]: "default",
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CURSOR_DRIVER_KIND]: "composer-2",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",

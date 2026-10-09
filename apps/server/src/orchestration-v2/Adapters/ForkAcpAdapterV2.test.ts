@@ -4,7 +4,6 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   DevinSettings,
   HermesSettings,
-  MuseSettings,
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
@@ -22,13 +21,13 @@ import { layerTest } from "../../config.ts";
 import {
   ProviderEventLoggers,
   NoOpProviderEventLoggers,
-} from "../../provider/Layers/ProviderEventLoggers.ts";
-import { layer as idAllocatorLayer } from "../IdAllocator.ts";
+} from "../../provider/ProviderEventLoggers.ts";
+import { layer as idAllocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
 import {
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2TurnInput,
-} from "../ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeForkAcpAdapterV2, makeForkAcpFlavor } from "./ForkAcpAdapterV2.ts";
 import { MessageId, NodeId, ProjectId, RunAttemptId, RunId } from "@t3tools/contracts";
 
@@ -117,15 +116,12 @@ const decodeRequest = Schema.decodeUnknownEffect(
 );
 const decodeHermesSettings = Schema.decodeSync(HermesSettings);
 const decodeDevinSettings = Schema.decodeSync(DevinSettings);
-const decodeMuseSettings = Schema.decodeSync(MuseSettings);
-const settingsFor = (driver: "hermes" | "devin" | "muse", binaryPath = "") => {
+const settingsFor = (driver: "hermes" | "devin", binaryPath = "") => {
   switch (driver) {
     case "hermes":
       return { driver, settings: decodeHermesSettings({ binaryPath }) };
     case "devin":
       return { driver, settings: decodeDevinSettings({ binaryPath }) };
-    case "muse":
-      return { driver, settings: decodeMuseSettings({ binaryPath }) };
   }
 };
 
@@ -176,7 +172,7 @@ describe("fork ACP providers on orchestration v2", () => {
 });
 
 describe("fork ACP transports", () => {
-  it.live.each(["hermes", "devin", "muse"] as const)(
+  it.live.each(["hermes", "devin"] as const)(
     "%s completes a real ACP turn through the shared adapter",
     (driver) =>
       Effect.gen(function* () {
@@ -265,61 +261,11 @@ describe("fork ACP transports", () => {
             "completed",
           ]);
         }
-        if (driver === "muse") {
-          for (const [ordinal, model, effort, runtimeMode] of [
-            [2, "muse-spark-1.2", "low", "approval-required"],
-            [3, "muse-spark-1.3", "high", "full-access"],
-            [4, "muse-spark-1.2", "low", "approval-required"],
-          ] as const) {
-            const completion = yield* session.events.pipe(
-              Stream.takeUntil(
-                (event) =>
-                  event.type === "provider_turn.updated" &&
-                  event.providerTurn.ordinal === ordinal &&
-                  event.providerTurn.status === "completed",
-              ),
-              Stream.runDrain,
-              Effect.forkScoped,
-            );
-            yield* session.startTurn(
-              makeTurnInput({
-                threadId,
-                providerThread,
-                instanceId,
-                ordinal,
-                runtimePolicy: ProviderAdapterV2RuntimePolicy.make({
-                  ...runtimePolicy,
-                  runtimeMode,
-                }),
-                modelSelection: {
-                  instanceId,
-                  model,
-                  options: [{ id: "reasoningEffort", value: effort }],
-                },
-                now: yield* DateTime.now,
-              }),
-            );
-            yield* Fiber.join(completion);
-          }
-        }
         const requests = yield* Effect.forEach(
           (yield* fs.readFileString(requestLog)).trim().split("\n"),
           (line) => decodeRequest(line),
         );
         const methods = requests.map((request) => request.method);
-        if (driver === "muse") {
-          const valuesFor = (configId: string) =>
-            requests.flatMap((request) =>
-              request.params?.configId === configId ? [request.params.value] : [],
-            );
-          expect(valuesFor("model")).toEqual([
-            "muse-spark-1.2",
-            "muse-spark-1.3",
-            "muse-spark-1.2",
-          ]);
-          expect(valuesFor("reasoning_effort")).toEqual(["low", "high", "low"]);
-          expect(valuesFor("mode")).toEqual(["ask", "auto", "ask"]);
-        }
         expect(methods).toContain("initialize");
         expect(methods).toContain("session/new");
         expect(methods.some((method) => method.includes("prompt"))).toBe(true);

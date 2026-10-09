@@ -1,193 +1,311 @@
-import * as Crypto from "effect/Crypto";
-import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-import * as Ref from "effect/Ref";
-import * as Schema from "effect/Schema";
-import { ChildProcessSpawner } from "effect/process";
-import type * as EffectAcpErrors from "effect-acp/errors";
-
-import { type MuseSettings, type ModelSelection } from "@t3tools/contracts";
+import {
+  DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
+  MUSE_DEFAULT_MODEL,
+  type ModelSelection,
+  type MuseSettings,
+  type ServerProviderModel,
+  TextGenerationError,
+} from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
-import { TextGenerationError } from "@t3tools/contracts";
-import * as TextGeneration from "./TextGeneration.ts";
+import {
+  createMuseSdkHost,
+  createMuseSdkHostEffect,
+  type MuseSdkHost,
+} from "../provider/museSdk.ts";
+import { museModelCapabilities, resolveMuseReasoningEffort } from "../provider/museModelCatalog.ts";
+import type * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
-} from "./TextGenerationPrompts.ts";
+} from "@t3tools/provider-core/server/textGenerationPrompts";
 import {
   sanitizeCommitSubject,
   sanitizePrTitle,
   sanitizeThreadTitle,
-} from "./TextGenerationUtils.ts";
-import {
-  MUSE_ELICITATION_CANCEL_RESPONSE,
-  MUSE_ELICITATION_CREATE_METHOD,
-  MuseElicitationCreateParams,
-  applyMuseAcpModelSelection,
-  currentMuseModelIdFromSessionSetup,
-  makeMuseAcpRuntime,
-  resolveMuseAcpBaseModelId,
-} from "../provider/acp/MuseAcpSupport.ts";
+  toJsonSchemaObject,
+} from "@t3tools/provider-core/server/textGenerationUtils";
 
-const MUSE_TIMEOUT_MS = 180_000;
+const SessionStarted = Schema.Struct({ session: Schema.Struct({ sessionId: Schema.String }) });
+const ItemNotification = Schema.Struct({
+  sessionId: Schema.String,
+  item: Schema.Struct({
+    itemId: Schema.String,
+    kind: Schema.String,
+    revision: Schema.Int,
+    turnId: Schema.optionalKey(Schema.String),
+    text: Schema.optionalKey(Schema.String),
+    retracted: Schema.optionalKey(Schema.Boolean),
+    truncated: Schema.optionalKey(Schema.Boolean),
+  }),
+});
+const TurnCompleted = Schema.Struct({
+  sessionId: Schema.String,
+  turnId: Schema.String,
+  terminal: Schema.String,
+  error: Schema.optionalKey(Schema.Struct({ message: Schema.String })),
+});
+const ApprovalRequested = Schema.Struct({
+  sessionId: Schema.String,
+  approvalId: Schema.String,
+  currentRequirementId: Schema.Unknown,
+  availableChoices: Schema.Array(
+    Schema.Struct({ choiceId: Schema.String, decision: Schema.String }),
+  ),
+});
+const UserInputRequested = Schema.Struct({
+  sessionId: Schema.String,
+  userInputId: Schema.String,
+});
+const decodeSession = Schema.decodeUnknownSync(SessionStarted);
+const decodeItem = Schema.decodeUnknownSync(ItemNotification);
+const decodeCompleted = Schema.decodeUnknownSync(TurnCompleted);
+const decodeApproval = Schema.decodeUnknownSync(ApprovalRequested);
+const decodeUserInput = Schema.decodeUnknownSync(UserInputRequested);
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-const isTextGenerationError = Schema.is(TextGenerationError);
+type Operation = keyof TextGeneration.TextGeneration["Service"];
 
-export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(function* (
-  museSettings: MuseSettings,
-  environment: NodeJS.ProcessEnv = process.env,
+async function generateMuseText(
+  host: MuseSdkHost,
+  workspaceRoot: string,
+  prompt: string,
+  modelId: string | undefined,
+  reasoningEffort: string | undefined,
+  signal: AbortSignal,
 ) {
-  const crypto = yield* Crypto.Crypto;
-  const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-
-  const runMuseJson = <S extends Schema.Top>({
-    operation,
-    cwd,
-    prompt,
-    outputSchemaJson,
-    modelSelection,
-  }: {
-    operation:
-      | "generateCommitMessage"
-      | "generatePrContent"
-      | "generateBranchName"
-      | "generateThreadTitle";
-    cwd: string;
-    prompt: string;
-    outputSchemaJson: S;
-    modelSelection: ModelSelection;
-  }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
-    Effect.gen(function* () {
-      const resolvedModel = resolveMuseAcpBaseModelId(modelSelection.model);
-      const outputRef = yield* Ref.make("");
-      const runtime = yield* makeMuseAcpRuntime({
-        museSettings,
-        environment,
-        childProcessSpawner: commandSpawner,
-        cwd,
-        clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
-      }).pipe(Effect.provideService(Crypto.Crypto, crypto));
-
-      // Text generation is not interactive: a permission prompt or an
-      // elicitation form would deadlock the run, so every client-bound
-      // request is declined. Muse still answers with plain text.
-      yield* runtime.handleRequestPermission(() =>
-        Effect.succeed({ outcome: { outcome: "cancelled" } }),
-      );
-      yield* runtime.handleExtRequest(
-        MUSE_ELICITATION_CREATE_METHOD,
-        MuseElicitationCreateParams,
-        () => Effect.succeed(MUSE_ELICITATION_CANCEL_RESPONSE),
-      );
-      yield* runtime.handleSessionUpdate((notification) => {
-        const update = notification.update;
-        if (update.sessionUpdate !== "agent_message_chunk") {
-          return Effect.void;
-        }
-        const content = update.content;
-        if (content.type !== "text") {
-          return Effect.void;
-        }
-        return Ref.update(outputRef, (current) => current + content.text);
-      });
-
-      const promptResult = yield* Effect.gen(function* () {
-        const started = yield* runtime.start();
-        yield* applyMuseAcpModelSelection({
-          runtime,
-          currentModelId: currentMuseModelIdFromSessionSetup(started.sessionSetupResult),
-          requestedModelId: resolvedModel,
-          mapError: (cause) =>
-            new TextGenerationError({
-              operation,
-              detail: "Failed to set Muse ACP base model for text generation.",
-              cause,
-            }),
-        });
-        return yield* runtime.prompt({
-          prompt: [{ type: "text", text: prompt }],
-        });
-      }).pipe(
-        Effect.timeoutOption(MUSE_TIMEOUT_MS),
-        Effect.flatMap(
-          Option.match({
-            onNone: () =>
-              Effect.fail(
-                new TextGenerationError({ operation, detail: "Muse ACP request timed out." }),
-              ),
-            onSome: (value) => Effect.succeed(value),
-          }),
-        ),
-        Effect.mapError((cause: EffectAcpErrors.AcpError | TextGenerationError) =>
-          isTextGenerationError(cause)
-            ? cause
-            : new TextGenerationError({
-                operation,
-                detail: "Muse ACP request failed.",
-                cause,
-              }),
-        ),
-      );
-
-      const trimmed = (yield* Ref.get(outputRef)).trim();
-      if (!trimmed) {
-        return yield* new TextGenerationError({
-          operation,
-          detail:
-            promptResult.stopReason === "cancelled"
-              ? "Muse ACP request was cancelled."
-              : "Muse Code returned empty output.",
+  let sessionId: string | undefined;
+  const turnId = host.connection.mintCommandId();
+  const messages = new Map<string, (typeof ItemNotification.Type)["item"]>();
+  let resolveCompletion: (text: string) => void = () => {};
+  let rejectCompletion: (error: unknown) => void = () => {};
+  const completion = new Promise<string>((resolve, reject) => {
+    resolveCompletion = resolve;
+    rejectCompletion = reject;
+  });
+  // Notifications may settle the turn before the turn/start acknowledgement arrives.
+  void completion.catch(() => {});
+  const rejectInteractive = async (method: string, params: Record<string, unknown>) => {
+    if (method === "approval/requested") {
+      const approval = decodeApproval(params);
+      if (approval.sessionId !== sessionId) return;
+      rejectCompletion(new Error("Muse requested an interactive action during text generation."));
+      const deny = approval.availableChoices.find((choice) => choice.decision === "denied");
+      if (deny) {
+        await host.connection.command("approval/decide", {
+          sessionId,
+          approvalId: approval.approvalId,
+          requirementId: approval.currentRequirementId,
+          choiceId: deny.choiceId,
         });
       }
+    } else {
+      const request = decodeUserInput(params);
+      if (request.sessionId !== sessionId) return;
+      rejectCompletion(new Error("Muse requested an interactive action during text generation."));
+      await host.connection.command("userInput/cancel", {
+        sessionId,
+        userInputId: request.userInputId,
+        reason: "T3 Code text generation cannot request user input.",
+      });
+    }
+  };
+  host.connection.onNotification((notification) => {
+    try {
+      if (notification.method === "item/completed" || notification.method === "item/updated") {
+        const { item, sessionId: itemSessionId } = decodeItem(notification.params);
+        if (itemSessionId !== sessionId || item.turnId !== turnId || item.kind !== "agentMessage")
+          return;
+        const previous = messages.get(item.itemId);
+        if (!previous || item.revision > previous.revision) messages.set(item.itemId, item);
+      } else if (notification.method === "turn/completed") {
+        const completed = decodeCompleted(notification.params);
+        if (completed.sessionId !== sessionId || completed.turnId !== turnId) return;
+        if (completed.terminal === "completed") {
+          // A turn may include commentary before its final structured answer.
+          const answer = [...messages.values()].findLast((item) => !item.retracted);
+          if (answer?.truncated) {
+            rejectCompletion(new Error("Muse text generation returned a truncated response."));
+          } else {
+            resolveCompletion(answer?.text ?? "");
+          }
+        } else {
+          rejectCompletion(
+            new Error(completed.error?.message ?? `Muse turn ${completed.terminal}.`),
+          );
+        }
+      } else if (
+        notification.method === "approval/requested" ||
+        notification.method === "userInput/requested"
+      ) {
+        void rejectInteractive(notification.method, notification.params ?? {}).catch(
+          rejectCompletion,
+        );
+      } else if (notification.method === "view/gap") {
+        rejectCompletion(new Error("Muse text generation lost part of its response."));
+      }
+    } catch (error) {
+      rejectCompletion(error);
+    }
+  });
+  host.connection.onProtocolError(rejectCompletion);
+  host.connection.onServerRequest(async () => {
+    const error = new Error("T3 Code text generation cannot approve interactive requests.");
+    rejectCompletion(error);
+    throw error;
+  });
+  void host.connection.closed.then(() => {
+    rejectCompletion(new Error("Muse connection closed before text generation completed."));
+  });
+  void host.exited.then(() => {
+    rejectCompletion(new Error("Muse exited before text generation completed."));
+  });
+  const onAbort = () => rejectCompletion(signal.reason);
+  signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    signal.throwIfAborted();
+    const started = decodeSession(
+      await host.connection.command("session/start", {
+        workspaceRoot,
+        providerId: "meta",
+        ...(modelId ? { modelId } : {}),
+        approvalMode: "denyUnmatched",
+      }),
+    );
+    sessionId = started.session.sessionId;
+    const acknowledged = host.connection.command(
+      "turn/start",
+      {
+        sessionId,
+        input: [{ type: "text", text: prompt }],
+        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+      },
+      { commandId: turnId },
+    );
+    return await Promise.race([acknowledged.then(() => completion), completion]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
 
-      const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson));
-      return yield* decodeOutput(extractJsonObject(trimmed)).pipe(
-        Effect.catchTags({
-          SchemaError: (cause) =>
-            Effect.fail(
-              new TextGenerationError({
-                operation,
-                detail: "Muse Code returned invalid structured output.",
-                cause,
-              }),
-            ),
-        }),
+export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(function* (
+  settings: MuseSettings,
+  options: {
+    readonly environment?: NodeJS.ProcessEnv;
+    readonly modelCatalog?: Effect.Effect<ReadonlyArray<ServerProviderModel>>;
+    /** Test hook. */
+    readonly createHost?: typeof createMuseSdkHost;
+  } = {},
+) {
+  const { environment, modelCatalog = Effect.succeed([]), createHost } = options;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const runMuseJson = Effect.fn("runMuseJson")(function* <S extends Schema.Top>(input: {
+    operation: Operation;
+    prompt: string;
+    outputSchema: S;
+    modelSelection: ModelSelection;
+  }): Effect.fn.Return<S["Type"], TextGenerationError, S["DecodingServices"]> {
+    const { operation } = input;
+    if (!settings.enabled) {
+      return yield* new TextGenerationError({ operation, detail: "Muse Code is disabled." });
+    }
+    const selectedModel = input.modelSelection.model.trim();
+    const models = yield* modelCatalog;
+    // "default" is the catalog's default model, as in chat. Without one, Muse picks.
+    const catalogModel =
+      selectedModel && selectedModel !== MUSE_DEFAULT_MODEL
+        ? models.find((model) => model.slug === selectedModel)
+        : models.find((model) => model.isDefault && !model.isCustom);
+    const modelId =
+      selectedModel && selectedModel !== MUSE_DEFAULT_MODEL ? selectedModel : catalogModel?.slug;
+    const reasoningEffort = resolveMuseReasoningEffort(
+      catalogModel?.capabilities ?? museModelCapabilities(),
+      getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort") ??
+        DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
+    );
+    const jsonSchema = yield* encodeJson(toJsonSchemaObject(input.outputSchema)).pipe(
+      Effect.mapError(
+        (cause) => new TextGenerationError({ operation, detail: "Invalid output schema.", cause }),
+      ),
+    );
+    const response = yield* Effect.gen(function* () {
+      // Metadata requests already include their context and do not need checkout configuration.
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-muse-text-" });
+      const host = yield* Effect.acquireRelease(
+        createMuseSdkHostEffect(
+          {
+            binaryPath: settings.binaryPath,
+            cwd,
+            ...(environment ? { environment } : {}),
+            readOnly: true,
+            // Muse derives SDK turn events from its session log, including completion.
+            sessionLogging: true,
+          },
+          createHost,
+        ),
+        (host: MuseSdkHost) => Effect.promise(() => host.close()),
+        { interruptible: true },
+      );
+      return yield* Effect.tryPromise((signal) =>
+        generateMuseText(
+          host,
+          cwd,
+          `${input.prompt}\n\nReturn only a JSON object matching this schema, with no markdown fences. Do not use tools or ask questions.\n${jsonSchema}`,
+          modelId,
+          reasoningEffort,
+          signal,
+        ),
       );
     }).pipe(
-      Effect.mapError((cause) =>
-        isTextGenerationError(cause)
-          ? cause
-          : new TextGenerationError({
-              operation,
-              detail: "Muse ACP text generation failed.",
-              cause,
-            }),
-      ),
       Effect.scoped,
+      Effect.mapError(
+        (cause) =>
+          new TextGenerationError({
+            operation,
+            detail:
+              "Muse Code text generation failed. Check Muse login and availability on this T3 server host.",
+            cause,
+          }),
+      ),
+      Effect.timeoutOption(180_000),
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.fail(new TextGenerationError({ operation, detail: "Muse request timed out." })),
+          onSome: Effect.succeed,
+        }),
+      ),
     );
+    const decodeOutput = Schema.decodeEffect(input.outputSchema);
+    return yield* decodeJson(extractJsonObject(response)).pipe(
+      Effect.flatMap(decodeOutput),
+      Effect.mapError(
+        (cause) =>
+          new TextGenerationError({
+            operation,
+            detail: "Muse returned invalid structured output.",
+            cause,
+          }),
+      ),
+    );
+  });
 
   const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
     Effect.fn("MuseTextGeneration.generateCommitMessage")(function* (input) {
-      const { prompt, outputSchema } = buildCommitMessagePrompt({
-        branch: input.branch,
-        stagedSummary: input.stagedSummary,
-        stagedPatch: input.stagedPatch,
-        includeBranch: input.includeBranch === true,
-        policy: input.policy,
-      });
-
       const generated = yield* runMuseJson({
         operation: "generateCommitMessage",
-        cwd: input.cwd,
-        prompt,
-        outputSchemaJson: outputSchema,
+        ...buildCommitMessagePrompt({ ...input, includeBranch: input.includeBranch === true }),
         modelSelection: input.modelSelection,
       });
-
       return {
         subject: sanitizeCommitSubject(generated.subject),
         body: generated.body.trim(),
@@ -196,74 +314,33 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
           : {}),
       };
     });
-
   const generatePrContent: TextGeneration.TextGeneration["Service"]["generatePrContent"] =
     Effect.fn("MuseTextGeneration.generatePrContent")(function* (input) {
-      const { prompt, outputSchema } = buildPrContentPrompt({
-        baseBranch: input.baseBranch,
-        headBranch: input.headBranch,
-        commitSummary: input.commitSummary,
-        diffSummary: input.diffSummary,
-        diffPatch: input.diffPatch,
-        policy: input.policy,
-        changeRequestTemplate: input.changeRequestTemplate,
-      });
-
       const generated = yield* runMuseJson({
         operation: "generatePrContent",
-        cwd: input.cwd,
-        prompt,
-        outputSchemaJson: outputSchema,
+        ...buildPrContentPrompt(input),
         modelSelection: input.modelSelection,
       });
-
-      return {
-        title: sanitizePrTitle(generated.title),
-        body: generated.body.trim(),
-      };
+      return { title: sanitizePrTitle(generated.title), body: generated.body.trim() };
     });
-
   const generateBranchName: TextGeneration.TextGeneration["Service"]["generateBranchName"] =
     Effect.fn("MuseTextGeneration.generateBranchName")(function* (input) {
-      const { prompt, outputSchema } = buildBranchNamePrompt({
-        message: input.message,
-        attachments: input.attachments,
-      });
-
       const generated = yield* runMuseJson({
         operation: "generateBranchName",
-        cwd: input.cwd,
-        prompt,
-        outputSchemaJson: outputSchema,
+        ...buildBranchNamePrompt(input),
         modelSelection: input.modelSelection,
       });
-
-      return {
-        branch: sanitizeBranchFragment(generated.branch),
-      };
+      return { branch: sanitizeBranchFragment(generated.branch) };
     });
-
   const generateThreadTitle: TextGeneration.TextGeneration["Service"]["generateThreadTitle"] =
     Effect.fn("MuseTextGeneration.generateThreadTitle")(function* (input) {
-      const { prompt, outputSchema } = buildThreadTitlePrompt({
-        message: input.message,
-        previousTitle: input.previousTitle,
-        attachments: input.attachments,
-      });
-
       const generated = yield* runMuseJson({
         operation: "generateThreadTitle",
-        cwd: input.cwd,
-        prompt,
-        outputSchemaJson: outputSchema,
+        ...buildThreadTitlePrompt(input),
         modelSelection: input.modelSelection,
       });
-
-      return {
-        title: sanitizeThreadTitle(generated.title),
-      } satisfies TextGeneration.ThreadTitleGenerationResult;
+      return { title: sanitizeThreadTitle(generated.title) };
     });
-
   return {
     generateCommitMessage,
     generatePrContent,
