@@ -9,8 +9,8 @@ import {
 } from "@t3tools/contracts";
 
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { Textarea } from "../ui/textarea";
 
 const ICON_TOO_LARGE = "Use a PNG or SVG under 32KB.";
 const ICON_TYPE = "Use a PNG or SVG file.";
@@ -129,16 +129,20 @@ export function ProviderInstanceIconPicker(props: {
         side="bottom"
         align="start"
         sideOffset={6}
-        width="md"
+        padding="compact"
+        width="lg"
         aria-label="Provider icon"
       >
-        <div className="grid gap-3">
-          <div className="flex items-center gap-3">
+        {/* The shared popup clips overflow and sizes from its first measurement.
+            A growing textarea of a data URI pushes Choose and Clear outside
+            that box, so this stays a short, fixed stack. */}
+        <div className="grid w-full min-w-0 gap-2">
+          <div className="flex min-w-0 items-center gap-3">
             <IconPreview icon={draftIcon} />
-            <div className="grid gap-1">
+            <div className="grid min-w-0 gap-0.5">
               <p className="text-sm font-medium text-foreground">Icon</p>
-              <p className="text-xs text-muted-foreground">
-                PNG or SVG for this instance. Shown in the picker, sidebar, and threads.
+              <p className="text-xs text-pretty text-muted-foreground">
+                PNG or SVG. Shown in the picker, sidebar, and threads.
               </p>
             </div>
           </div>
@@ -164,16 +168,35 @@ export function ProviderInstanceIconPicker(props: {
               );
             }}
           />
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            Choose image
-          </Button>
-          <Textarea
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              Choose image
+            </Button>
+            {resolved ? (
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost-muted"
+                onClick={() => {
+                  setDraft(null);
+                  setError(null);
+                  props.onCommit("");
+                }}
+              >
+                <XIcon aria-hidden />
+                Clear icon
+              </Button>
+            ) : null}
+          </div>
+          <Input
+            nativeInput
             size="sm"
+            font="mono"
             value={draftValue}
             spellCheck={false}
             aria-label={`Icon URL for ${props.displayName}`}
@@ -188,24 +211,9 @@ export function ProviderInstanceIconPicker(props: {
             }}
           />
           {error ? (
-            <p role="alert" className="text-xs text-destructive">
+            <p role="alert" className="text-xs text-pretty text-destructive">
               {error}
             </p>
-          ) : null}
-          {resolved ? (
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost-muted"
-              onClick={() => {
-                setDraft(null);
-                setError(null);
-                props.onCommit("");
-              }}
-            >
-              <XIcon aria-hidden />
-              Clear icon
-            </Button>
           ) : null}
         </div>
       </PopoverPopup>
