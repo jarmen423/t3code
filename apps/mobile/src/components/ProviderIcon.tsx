@@ -3,7 +3,7 @@ import { Path, Svg } from "react-native-svg";
 import { View } from "react-native";
 import { providerInstanceInitials } from "@t3tools/client-runtime/state/provider-instance-display";
 import { useState } from "react";
-import { resolveOfficialAcpRegistryIconUrl } from "@t3tools/contracts";
+import { resolveOfficialAcpRegistryIconUrl, resolveProviderInstanceIcon } from "@t3tools/contracts";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { AppText as Text } from "./AppText";
 import { getProviderClient } from "../lib/providerClients";
@@ -11,6 +11,8 @@ import { getProviderClient } from "../lib/providerClients";
 type ProviderIconProps = {
   readonly provider: string | null | undefined;
   readonly iconUrl?: string | null | undefined;
+  /** User-configured instance icon. Drawn as an image, ahead of driver glyphs. */
+  readonly instanceIcon?: string | null | undefined;
   readonly size?: number;
 };
 
@@ -68,6 +70,20 @@ export function ProviderIcon(props: ProviderIconProps) {
   const isDarkMode = themeAppearance === "dark";
   const size = props.size ?? 16;
   const mono = isDarkMode ? "#e5e5e5" : "#171717";
+  const instanceIcon = resolveProviderInstanceIcon(props.instanceIcon);
+  const [failedInstanceIcon, setFailedInstanceIcon] = useState<string | null>(null);
+
+  if (instanceIcon !== null && failedInstanceIcon !== instanceIcon) {
+    return (
+      <Image
+        accessibilityIgnoresInvertColors
+        contentFit="contain"
+        source={{ uri: instanceIcon }}
+        style={{ width: size, height: size }}
+        onError={() => setFailedInstanceIcon(instanceIcon)}
+      />
+    );
+  }
 
   if (props.provider?.trim().toLowerCase() === "antigravity") {
     return (
@@ -202,6 +218,7 @@ export function ProviderIcon(props: ProviderIconProps) {
  */
 export function ProviderInstanceIcon(props: {
   readonly iconUrl?: string | null;
+  readonly instanceIcon?: string | null;
   readonly provider: string | null | undefined;
   readonly size?: number;
   readonly displayName: string;
@@ -212,7 +229,12 @@ export function ProviderInstanceIcon(props: {
   return (
     <View style={{ position: "relative" }}>
       <View style={{ opacity: 0.6 }}>
-        <ProviderIcon iconUrl={props.iconUrl} provider={props.provider} size={props.size} />
+        <ProviderIcon
+          iconUrl={props.iconUrl}
+          instanceIcon={props.instanceIcon}
+          provider={props.provider}
+          size={props.size}
+        />
       </View>
       {props.showBadge ? (
         <View

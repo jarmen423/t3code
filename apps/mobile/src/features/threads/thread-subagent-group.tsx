@@ -50,13 +50,19 @@ function SubagentElapsed({ agents }: { readonly agents: ReadonlyArray<AgentTimin
 function SubagentAvatar(props: {
   readonly item: SubagentItem;
   readonly iconUrl?: string | null | undefined;
+  readonly instanceIcon?: string | null | undefined;
 }) {
   return (
     <View
       accessible={false}
       className="h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-card"
     >
-      <ProviderIcon provider={props.item.driver} iconUrl={props.iconUrl} size={15} />
+      <ProviderIcon
+        provider={props.item.driver}
+        iconUrl={props.iconUrl}
+        instanceIcon={props.instanceIcon}
+        size={15}
+      />
     </View>
   );
 }
@@ -95,8 +101,12 @@ export function ThreadSubagentGroup(props: {
   const label = `${agents.length} subagents`;
   const summary = summarizeSubagentStatuses(agents.map((agent) => agent.status));
   const expanded = props.expandedRows[props.anchorKey] ?? false;
-  const iconUrl = (item: SubagentItem) =>
-    config?.providers.find((provider) => provider.instanceId === item.providerInstanceId)?.iconUrl;
+  const providerIcon = (item: SubagentItem) => {
+    const provider = config?.providers.find(
+      (candidate) => candidate.instanceId === item.providerInstanceId,
+    );
+    return { iconUrl: provider?.iconUrl, instanceIcon: provider?.instanceIcon };
+  };
   return (
     <WorkLogBlock>
       {grouped ? (
@@ -110,7 +120,7 @@ export function ThreadSubagentGroup(props: {
           <View className="flex-row items-center">
             {agents.slice(0, 3).map((agent, index) => (
               <View key={agent.item.id} style={{ marginLeft: index === 0 ? 0 : -7 }}>
-                <SubagentAvatar item={agent.item} iconUrl={iconUrl(agent.item)} />
+                <SubagentAvatar item={agent.item} {...providerIcon(agent.item)} />
               </View>
             ))}
             {agents.length > 3 ? (

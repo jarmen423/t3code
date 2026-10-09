@@ -71,6 +71,7 @@ import {
   type ProviderMaintenanceCapabilities,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import type { ProviderSnapshotSource } from "./builtInProviderCatalog.ts";
+import { applyProviderInstanceIcon } from "./providerInstanceIcon.ts";
 
 export type ProviderMaintenanceActionKind = "update";
 
@@ -417,13 +418,17 @@ const snapshotInstanceKey = (provider: ServerProvider): ProviderInstanceId => {
 // after `ProviderInstanceRegistry` rebuilds an instance (e.g. because
 // its settings changed), a fresh source rides the new PubSub instead
 // of a closed one.
-const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource => ({
-  instanceId: instance.instanceId,
-  driverKind: instance.driverKind,
-  getSnapshot: instance.snapshot.getSnapshot,
-  refresh: instance.snapshot.refresh,
-  streamChanges: instance.snapshot.streamChanges,
-});
+const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource => {
+  const stampIcon = (snapshot: ServerProvider) =>
+    applyProviderInstanceIcon(snapshot, instance.icon);
+  return {
+    instanceId: instance.instanceId,
+    driverKind: instance.driverKind,
+    getSnapshot: instance.snapshot.getSnapshot.pipe(Effect.map(stampIcon)),
+    refresh: instance.snapshot.refresh.pipe(Effect.map(stampIcon)),
+    streamChanges: instance.snapshot.streamChanges.pipe(Stream.map(stampIcon)),
+  };
+};
 
 export const layer = Layer.effect(
   ProviderRegistry,

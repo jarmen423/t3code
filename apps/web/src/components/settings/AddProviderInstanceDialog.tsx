@@ -12,6 +12,7 @@ import {
   ProviderInstanceId,
   ProviderDriverKind,
   type EnvironmentId,
+  resolveProviderInstanceIcon,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
 } from "@t3tools/contracts";
@@ -33,6 +34,7 @@ import { RadioGroup } from "../ui/radio-group";
 import { toastManager } from "../ui/toast";
 import { providerClients } from "./providerDriverMeta";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
+import { ProviderInstanceIconPicker } from "./ProviderInstanceIconPicker";
 import { SettingsGroup } from "./SettingsGroup";
 import { SettingsRow } from "./settingsLayout";
 import { ProviderSettingsForm, deriveProviderSettingsFields } from "./ProviderSettingsForm";
@@ -149,9 +151,11 @@ export function AddProviderInstanceDialog({
   const defaultIdentity: ProviderIdentityDraft = {
     label: driverOption.label,
     accentColor: "",
+    icon: "",
     instanceIdOverride: null,
   };
-  const { label, accentColor, instanceIdOverride } = identityByDriver[driver] ?? defaultIdentity;
+  const { label, accentColor, icon, instanceIdOverride } =
+    identityByDriver[driver] ?? defaultIdentity;
   const instanceId =
     instanceIdOverride ??
     deriveAvailableInstanceId(
@@ -317,12 +321,14 @@ export function AddProviderInstanceDialog({
         : (configByDriver[driver] ?? {});
     const hasConfig = Object.keys(config).length > 0;
     const normalizedAccentColor = normalizeProviderAccentColor(accentColor);
+    const normalizedIcon = resolveProviderInstanceIcon(icon);
 
     const nextInstance: ProviderInstanceConfig = {
       driver,
       enabled: true,
       ...(label.trim().length > 0 ? { displayName: label.trim() } : {}),
       ...(normalizedAccentColor ? { accentColor: normalizedAccentColor } : {}),
+      ...(normalizedIcon ? { icon: normalizedIcon } : {}),
       ...(hasConfig ? { config } : {}),
       ...(isLocalAcp && localEnvironment.length > 0 ? { environment: localEnvironment } : {}),
     };
@@ -623,6 +629,17 @@ export function AddProviderInstanceDialog({
                         setIdentityDraft({ instanceIdOverride: event.target.value });
                       }}
                       aria-invalid={showInstanceIdError}
+                    />
+                  }
+                />
+                <SettingsRow
+                  title="Icon"
+                  description="Optional PNG or SVG for this instance."
+                  control={
+                    <ProviderInstanceIconPicker
+                      displayName={label || driverOption.label}
+                      value={icon || undefined}
+                      onCommit={(value) => setIdentityDraft({ icon: value })}
                     />
                   }
                 />

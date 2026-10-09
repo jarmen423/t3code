@@ -12,12 +12,14 @@ export const LOCAL_ACP_WIZARD_STEPS = ["Provider", "Identity"] as const;
 export interface ProviderIdentityDraft {
   readonly label: string;
   readonly accentColor: string;
+  readonly icon: string;
   readonly instanceIdOverride: string | null;
 }
 
 const EMPTY_PROVIDER_IDENTITY_DRAFT: ProviderIdentityDraft = {
   label: "",
   accentColor: "",
+  icon: "",
   instanceIdOverride: null,
 };
 

@@ -102,6 +102,7 @@ describe("ACP Registry wizard", () => {
     expect(getProviderIdentityDraft(registryDrafts, "codex")).toEqual({
       label: "",
       accentColor: "",
+      icon: "",
       instanceIdOverride: null,
     });
 

@@ -1,9 +1,10 @@
 import type { MenuAction } from "@react-native-menu/menu";
-import type {
-  ModelCapabilities,
-  ModelSelection,
-  RuntimeMode,
-  ServerConfig as T3ServerConfig,
+import {
+  resolveProviderInstanceIcon,
+  type ModelCapabilities,
+  type ModelSelection,
+  type RuntimeMode,
+  type ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
@@ -19,6 +20,7 @@ export type ModelOption = {
   readonly providerDriver: string;
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   readonly providerIconUrl?: string | undefined;
+  readonly providerInstanceIcon?: string | undefined;
   readonly isDefault: boolean;
   readonly isLegacy: boolean;
   readonly isUnavailable?: boolean;
@@ -182,6 +184,7 @@ export function buildModelOptions(
     }
 
     const providerLabel = providerDisplayLabel(provider);
+    const providerInstanceIcon = resolveProviderInstanceIcon(provider.instanceIcon);
     const updateRequired = provider.updateRequiredModels?.length
       ? { driver: provider.driver, updateRequiredModels: provider.updateRequiredModels }
       : undefined;
@@ -198,6 +201,7 @@ export function buildModelOptions(
           ? {}
           : { supportedRuntimeModes: provider.supportedRuntimeModes }),
         ...(provider.iconUrl ? { providerIconUrl: provider.iconUrl } : {}),
+        ...(providerInstanceIcon ? { providerInstanceIcon } : {}),
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
         ...(updateRequired ? { providerUpdateRequired: updateRequired } : {}),

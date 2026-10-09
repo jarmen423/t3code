@@ -25,7 +25,11 @@ import {
 import { EditorId, FileManagerRevealKind, RemoteOpenTarget } from "./editor.ts";
 import { ModelCapabilities } from "./model.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
-import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceIcon,
+  ProviderInstanceId,
+} from "./providerInstance.ts";
 import { ServerProviderUsageLimits, UsageLimitSourceSnapshots } from "./providerUsageLimits.ts";
 import { ServerSettings } from "./settings.ts";
 
@@ -249,6 +253,9 @@ export const ServerProvider = Schema.Struct({
   // Optional visual identity supplied by the owning provider driver. Clients
   // must still validate remote URLs against that driver's trusted origin.
   iconUrl: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(2_048))),
+  // User-configured icon from provider-instance settings. Separate from
+  // `iconUrl`, which stays on the driver's trusted origin (the ACP registry CDN).
+  instanceIcon: Schema.optional(ProviderInstanceIcon),
   badgeLabel: Schema.optional(TrimmedNonEmptyString),
   continuation: Schema.optional(ServerProviderContinuation),
   showInteractionModeToggle: Schema.optional(Schema.Boolean),

@@ -1,8 +1,8 @@
-import { type CSSProperties, memo } from "react";
+import { type CSSProperties, memo, useState } from "react";
 
 import { providerInstanceInitials } from "@t3tools/client-runtime/state/provider-instance-display";
 
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind, resolveProviderInstanceIcon } from "@t3tools/contracts";
 import {
   AntigravityIcon,
   ClaudeAI,
@@ -74,10 +74,34 @@ export function resolveProviderInstanceAcpRegistryIconUrl(input: {
   );
 }
 
+/**
+ * Pick the image to draw for one provider instance.
+ *
+ * A configured instance icon wins for that instance only. Registry icons
+ * still go through the official CDN allowlist, and other drivers keep their
+ * built-in glyphs when no instance icon is set.
+ */
+export function selectProviderInstanceIcon(input: {
+  readonly driverKind: ProviderDriverKind;
+  readonly instanceIcon?: string | null | undefined;
+  readonly registryIconUrl?: string | null | undefined;
+  readonly registryAgentId?: string | null | undefined;
+}): { readonly kind: "instance" | "registry"; readonly src: string } | null {
+  const instanceIcon = resolveProviderInstanceIcon(input.instanceIcon);
+  if (instanceIcon !== null) return { kind: "instance", src: instanceIcon };
+  const registryIcon = resolveProviderInstanceAcpRegistryIconUrl({
+    driverKind: input.driverKind,
+    iconUrl: input.registryIconUrl ?? undefined,
+    agentId: input.registryAgentId ?? undefined,
+  });
+  return registryIcon === null ? null : { kind: "registry", src: registryIcon };
+}
+
 export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   driverKind: ProviderDriverKind;
   displayName: string;
   accentColor?: string | undefined;
+  instanceIcon?: string | undefined;
   acpRegistryAgentId?: string | undefined;
   acpRegistryIconUrl?: string | undefined;
   showBadge?: boolean;
@@ -95,12 +119,28 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
     ? ({ "--provider-accent": props.accentColor } as CSSProperties)
     : undefined;
   const badgeContent = props.badgeContent ?? "initials";
-  const isAcpRegistry = props.driverKind === "acpRegistry";
-  const acpRegistryIconUrl = resolveProviderInstanceAcpRegistryIconUrl({
+  const selectedIcon = selectProviderInstanceIcon({
     driverKind: props.driverKind,
-    agentId: props.acpRegistryAgentId,
-    iconUrl: props.acpRegistryIconUrl,
+    instanceIcon: props.instanceIcon,
+    registryIconUrl: props.acpRegistryIconUrl,
+    registryAgentId: props.acpRegistryAgentId,
   });
+  const [failedInstanceIcon, setFailedInstanceIcon] = useState<string | null>(null);
+  const instanceIcon =
+    selectedIcon?.kind === "instance" && failedInstanceIcon !== selectedIcon.src
+      ? selectedIcon.src
+      : null;
+  const acpRegistryIconUrl =
+    instanceIcon === null && selectedIcon?.kind === "registry"
+      ? selectedIcon.src
+      : instanceIcon === null
+        ? resolveProviderInstanceAcpRegistryIconUrl({
+            driverKind: props.driverKind,
+            agentId: props.acpRegistryAgentId,
+            iconUrl: props.acpRegistryIconUrl,
+          })
+        : null;
+  const isAcpRegistry = acpRegistryIconUrl !== null || props.driverKind === "acpRegistry";
 
   return (
     <span
@@ -111,7 +151,18 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       style={accentStyle}
       data-provider-accent-color={props.accentColor}
     >
-      {isAcpRegistry ? (
+      {instanceIcon !== null ? (
+        <img
+          alt=""
+          aria-hidden
+          className={cn("size-5 shrink-0 object-contain", props.iconClassName)}
+          decoding="async"
+          draggable={false}
+          referrerPolicy="no-referrer"
+          src={instanceIcon}
+          onError={() => setFailedInstanceIcon(instanceIcon)}
+        />
+      ) : isAcpRegistry ? (
         <AcpRegistryAgentIcon
           // The search-tile radius would crop most of the glyph at these
           // inline sizes.

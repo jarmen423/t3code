@@ -35,6 +35,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const PROVIDER_SLUG_MAX_CHARS = 64;
@@ -112,6 +113,80 @@ export type ProviderInstanceEnvironmentVariable = typeof ProviderInstanceEnviron
 export const ProviderInstanceEnvironment = Schema.Array(ProviderInstanceEnvironmentVariable);
 export type ProviderInstanceEnvironment = typeof ProviderInstanceEnvironment.Type;
 
+/** Character cap for a stored icon URI, including the data-URI prefix. */
+export const PROVIDER_INSTANCE_ICON_MAX_CHARS = 48_000;
+/** Decoded byte cap for a base64 PNG or SVG icon. */
+export const PROVIDER_INSTANCE_ICON_MAX_DECODED_BYTES = 32 * 1024;
+
+const PROVIDER_INSTANCE_DATA_ICON_PATTERN =
+  /^data:image\/(?:png|svg\+xml);base64,((?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?)$/;
+
+/**
+ * Accept a user-configured instance icon, or return null.
+ *
+ * Registry icons stay on the official CDN allowlist. This check is only for
+ * the icon a user sets on one provider instance: a base64 PNG or SVG data
+ * URI, or an https URL with no credentials. Data URIs must be base64 so the
+ * value cannot carry raw markup, and callers render the result as an image,
+ * never as HTML or inline SVG.
+ */
+export function resolveProviderInstanceIcon(icon: string | null | undefined): string | null {
+  if (icon === null || icon === undefined) return null;
+  const value = icon.trim();
+  if (value.length === 0 || value.length > PROVIDER_INSTANCE_ICON_MAX_CHARS) return null;
+
+  const dataIcon = PROVIDER_INSTANCE_DATA_ICON_PATTERN.exec(value);
+  if (dataIcon) {
+    const payload = dataIcon[1] ?? "";
+    if (payload.length === 0) return null;
+    const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
+    const decodedBytes = (payload.length / 4) * 3 - padding;
+    if (decodedBytes <= 0 || decodedBytes > PROVIDER_INSTANCE_ICON_MAX_DECODED_BYTES) return null;
+    return value;
+  }
+
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== "https:" ||
+      url.username !== "" ||
+      url.password !== "" ||
+      url.hostname === "" ||
+      url.href.length > PROVIDER_INSTANCE_ICON_MAX_CHARS
+    ) {
+      return null;
+    }
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+const isProviderInstanceIcon = Schema.makeFilter(
+  (value: string) =>
+    resolveProviderInstanceIcon(value) !== null ||
+    "an https URL or a base64 PNG or SVG data URI within the size cap",
+);
+
+/**
+ * Canonical instance icon. Decoding trims, rejects other schemes, and
+ * normalizes https URLs. An absent key stays absent so older settings files
+ * keep decoding.
+ */
+export const ProviderInstanceIcon = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(PROVIDER_INSTANCE_ICON_MAX_CHARS),
+  isProviderInstanceIcon,
+).pipe(
+  Schema.decodeTo(
+    Schema.String,
+    SchemaTransformation.transform({
+      decode: (value) => resolveProviderInstanceIcon(value) ?? value,
+      encode: (value) => resolveProviderInstanceIcon(value) ?? value,
+    }),
+  ),
+);
+export type ProviderInstanceIcon = typeof ProviderInstanceIcon.Type;
+
 /**
  * Envelope shape for a provider instance configuration in `ServerSettings`.
  *
@@ -125,6 +200,9 @@ export const ProviderInstanceConfig = Schema.Struct({
   driver: ProviderDriverKind,
   displayName: Schema.optional(TrimmedNonEmptyString),
   accentColor: Schema.optional(TrimmedNonEmptyString),
+  // Optional image for this instance only. Registry CDN icons stay on
+  // `ServerProvider.iconUrl` and are not read from here.
+  icon: Schema.optional(ProviderInstanceIcon),
   environment: Schema.optionalKey(ProviderInstanceEnvironment),
   enabled: Schema.optionalKey(Schema.Boolean),
   config: Schema.optionalKey(Schema.Unknown),

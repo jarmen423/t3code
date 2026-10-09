@@ -61,6 +61,7 @@ export function ThreadRelationshipIcon({
         <ProviderInstanceIcon
           driverKind={driver}
           displayName={provider?.displayName ?? driver}
+          instanceIcon={provider?.instanceIcon}
           acpRegistryIconUrl={provider?.iconUrl}
           iconClassName={iconClassName}
           className="z-auto"

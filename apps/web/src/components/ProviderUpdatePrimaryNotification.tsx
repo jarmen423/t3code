@@ -51,6 +51,7 @@ function ProviderUpdateToastIcon({ provider }: { provider: ServerProvider }) {
       <ProviderInstanceIcon
         driverKind={provider.driver}
         displayName={provider.displayName ?? provider.driver}
+        instanceIcon={provider.instanceIcon}
         acpRegistryIconUrl={provider.iconUrl}
         iconClassName="size-4"
       />

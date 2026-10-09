@@ -84,6 +84,8 @@ export interface ProviderInstance {
   readonly continuationIdentity: ProviderContinuationIdentity;
   readonly displayName: string | undefined;
   readonly accentColor?: string | undefined;
+  /** User-configured instance icon. Snapshot publication stamps this onto `instanceIcon`. */
+  readonly icon?: string | undefined;
   readonly enabled: boolean;
   readonly snapshot: ServerProviderShape;
   readonly snapshotForCwd?: (

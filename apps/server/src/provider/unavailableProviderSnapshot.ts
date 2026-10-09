@@ -15,6 +15,7 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { applyProviderInstanceIcon } from "./providerInstanceIcon.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
@@ -25,6 +26,7 @@ export interface UnavailableProviderSnapshotInput {
   readonly instanceId: ProviderInstanceId;
   readonly displayName?: string | undefined;
   readonly accentColor?: string | undefined;
+  readonly icon?: string | undefined;
   readonly reason: string;
   /**
    * Optional override for `checkedAt`. Defaulted to the current Effect
@@ -64,16 +66,19 @@ export function buildUnavailableProviderSnapshot(
       },
     });
 
-    return {
-      ...base,
-      instanceId: input.instanceId,
-      ...(input.accentColor ? { accentColor: input.accentColor } : {}),
-      driver:
-        typeof input.driverKind === "string"
-          ? ProviderDriverKind.make(input.driverKind)
-          : input.driverKind,
-      availability: "unavailable",
-      unavailableReason: input.reason,
-    };
+    return applyProviderInstanceIcon(
+      {
+        ...base,
+        instanceId: input.instanceId,
+        ...(input.accentColor ? { accentColor: input.accentColor } : {}),
+        driver:
+          typeof input.driverKind === "string"
+            ? ProviderDriverKind.make(input.driverKind)
+            : input.driverKind,
+        availability: "unavailable",
+        unavailableReason: input.reason,
+      },
+      input.icon,
+    );
   });
 }

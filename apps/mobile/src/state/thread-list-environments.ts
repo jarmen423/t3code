@@ -1,5 +1,6 @@
 import {
   resolveEnvironmentMachineKind,
+  resolveProviderInstanceIcon,
   type EnvironmentId,
   type EnvironmentMachineKind,
   type ServerConfig,
@@ -9,7 +10,7 @@ import { Atom } from "effect/reactivity";
 
 export type ThreadListProvider = Pick<
   ServerProvider,
-  "instanceId" | "driver" | "displayName" | "accentColor" | "iconUrl"
+  "instanceId" | "driver" | "displayName" | "accentColor" | "iconUrl" | "instanceIcon"
 >;
 
 const capabilityKeys = [
@@ -25,12 +26,13 @@ const capabilityKeys = [
 function selectEnvironment(config: ServerConfig) {
   return {
     providers: config.providers.map(
-      ({ instanceId, driver, displayName, accentColor, iconUrl }) => ({
+      ({ instanceId, driver, displayName, accentColor, iconUrl, instanceIcon }) => ({
         instanceId,
         driver,
         displayName,
         accentColor,
         iconUrl,
+        instanceIcon: resolveProviderInstanceIcon(instanceIcon) ?? undefined,
       }),
     ),
     machineKind: resolveEnvironmentMachineKind(config),
@@ -53,7 +55,8 @@ function sameProviders(
         provider.driver === other.driver &&
         provider.displayName === other.displayName &&
         provider.accentColor === other.accentColor &&
-        provider.iconUrl === other.iconUrl
+        provider.iconUrl === other.iconUrl &&
+        provider.instanceIcon === other.instanceIcon
       );
     })
   );
