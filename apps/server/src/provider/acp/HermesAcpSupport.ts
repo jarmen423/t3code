@@ -1,4 +1,5 @@
-import { type HermesSettings, ProviderDriverKind, type RuntimeMode } from "@t3tools/contracts";
+import { ProviderDriverKind, type RuntimeMode } from "@t3tools/contracts";
+import type { HermesSettings } from "@t3tools/provider-hermes/settings";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -8,7 +9,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 /**
  * Product slug for "keep the model Hermes is configured with". It is not a

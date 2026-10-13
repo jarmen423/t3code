@@ -1,4 +1,5 @@
-import { DevinSettings, ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind } from "@t3tools/contracts";
+import { DevinSettings } from "@t3tools/provider-devin/settings";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -11,7 +12,9 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -20,7 +23,7 @@ import { ProviderDriverError } from "../Errors.ts";
 import { makeForkAcpAdapterV2 } from "../../orchestration-v2/Adapters/ForkAcpAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { makeDevinProvider, type DevinProbeResult } from "../DevinProvider.ts";
-import { ProviderEventLoggers } from "../ProviderEventLoggers.ts";
+import { ProviderEventLoggers } from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeDevinAcpRuntime, probeDevinAuthStatus } from "../acp/DevinAcpSupport.ts";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import {
@@ -28,7 +31,7 @@ import {
   type ProviderDriver,
   type ProviderInstance,
 } from "@t3tools/provider-core/server/driver";
-import { withInstanceIdentity } from "./instanceIdentity.ts";
+import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 
@@ -50,7 +53,9 @@ export type DevinDriverEnv =
   | Path.Path
   | ProviderEventLoggers
   | ServerConfig
-  | ServerSettingsService;
+  | ServerSettingsService
+  | typeof AgentScope
+  | McpProviderSessions.McpProviderSessions;
 
 /**
  * Devin speaks ACP over `devin acp`. The process always runs on the host that
@@ -70,7 +75,7 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
       const crypto = yield* Crypto.Crypto;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const serverConfig = yield* ServerConfig;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
+      const processEnv = yield* mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER,
         instanceId,

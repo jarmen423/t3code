@@ -1,6 +1,5 @@
 import {
   type CustomModelSetting,
-  type HermesSettings,
   type ModelCapabilities,
   ProviderDriverKind,
   type ProviderSetupError,
@@ -9,6 +8,7 @@ import {
   type ServerProviderModel,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
+import type { HermesSettings } from "@t3tools/provider-hermes/settings";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -20,7 +20,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import type { AcpSessionRuntimeStartResult } from "./acp/AcpSessionRuntime.ts";
+import type { AcpSessionRuntimeStartResult } from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   HERMES_DEFAULT_MODEL_SLUG,
   isValidHermesReasoningEffortToken,

@@ -1,15 +1,17 @@
-import { HostProcessPlatform, HostProcessExecutablePath } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
-  DevinSettings,
-  HermesSettings,
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
+import { DevinSettings } from "@t3tools/provider-devin/settings";
+import { HermesSettings } from "@t3tools/provider-hermes/settings";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -21,7 +23,7 @@ import { layerTest } from "../../config.ts";
 import {
   ProviderEventLoggers,
   NoOpProviderEventLoggers,
-} from "../../provider/ProviderEventLoggers.ts";
+} from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { layer as idAllocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
 import {
   ProviderAdapterV2RuntimePolicy,
@@ -98,6 +100,8 @@ function makeTurnInput(input: {
 const testLayer = Layer.mergeAll(
   NodeServices.layer,
   idAllocatorLayer,
+  McpProviderSessions.layer,
+  TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
   layerTest(process.cwd(), { prefix: "t3-fork-acp-v2-" }).pipe(Layer.provide(NodeServices.layer)),
   Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers),
 );
@@ -176,8 +180,8 @@ describe("fork ACP transports", () => {
     "%s completes a real ACP turn through the shared adapter",
     (driver) =>
       Effect.gen(function* () {
-        if ((yield* HostProcessPlatform) === "win32") return;
-        const executable = yield* HostProcessExecutablePath;
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const executable = yield* HostProcess.ExecutablePath;
         const fs = yield* FileSystem.FileSystem;
         const workspace = yield* fs.makeTempDirectoryScoped();
         const script = `${workspace}/mock-agent`;

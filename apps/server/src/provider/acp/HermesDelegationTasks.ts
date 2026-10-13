@@ -1,4 +1,4 @@
-import type { AcpToolCallState } from "./AcpRuntimeModel.ts";
+import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 
 interface DelegatedChild {
   readonly taskId: string;

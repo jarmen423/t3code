@@ -1,21 +1,15 @@
-import {
-  ProviderDriverKind,
-  type DevinSettings,
-  type HermesSettings,
-  type ProviderInstanceId,
-} from "@t3tools/contracts";
+import { ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
+import type { DevinSettings } from "@t3tools/provider-devin/settings";
+import type { HermesSettings } from "@t3tools/provider-hermes/settings";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
-import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import { ChildProcessSpawner } from "effect/process";
 import * as AcpErrors from "effect-acp/errors";
 import type * as AcpSchema from "effect-acp/compat";
-import { ServerConfig } from "../../config.ts";
-import { ProviderEventLoggers } from "../../provider/ProviderEventLoggers.ts";
-import { makeAcpNativeLoggerFactory } from "../../provider/acp/AcpNativeLogging.ts";
-import type * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
+import { ProviderEventLoggers } from "@t3tools/provider-core/server/ProviderEventLoggers";
+import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeLogging";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   applyDevinAcpModelSelection,
   devinPermissionMode,
@@ -34,18 +28,17 @@ import {
   HermesDelegationTracker,
   type HermesDelegationLifecycle,
 } from "../../provider/acp/HermesDelegationTasks.ts";
-import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   AcpProviderCapabilitiesV2,
   makeAcpAdapterV2,
   type AcpAdapterV2Flavor,
   type AcpAdapterV2RuntimeInput,
-} from "./AcpAdapterV2.ts";
+} from "@t3tools/provider-acp/server/adapter";
 import {
   extractDevinSubagentUpdate,
   normalizeDevinSessionUpdate,
   normalizeDevinToolCall,
-} from "./DevinAcp.ts";
+} from "@t3tools/provider-acp-registry/server/devinAcp";
 
 type ForkProvider =
   | { readonly driver: "hermes"; readonly settings: HermesSettings }
@@ -159,11 +152,7 @@ export const makeForkAcpAdapterV2 = Effect.fn("makeForkAcpAdapterV2")(function* 
   provider: ForkProvider,
   callbacks: ForkAcpCallbacks,
 ) {
-  const crypto = yield* Crypto.Crypto;
-  const fileSystem = yield* FileSystem.FileSystem;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const serverConfig = yield* ServerConfig;
-  const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const selfInvocation = yield* resolveSelfInvocation();
   const loggers = yield* ProviderEventLoggers;
   const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
@@ -210,19 +199,14 @@ export const makeForkAcpAdapterV2 = Effect.fn("makeForkAcpAdapterV2")(function* 
     ...makeForkAcpFlavor(provider, makeRuntime),
     onAvailableCommandsUpdate: callbacks.onAvailableCommands,
   });
-  return makeAcpAdapterV2({
+  return yield* makeAcpAdapterV2({
     instanceId: callbacks.instanceId,
     flavor: createSessionFlavor(),
     createSessionFlavor,
-    crypto,
-    fileSystem,
-    idAllocator,
-    serverConfig,
     selfInvocation,
     ...(provider.driver === "devin"
       ? {
           clientTerminals: {
-            childProcessSpawner: spawner,
             environment: callbacks.environment ?? {},
             shellCommands: true,
           },

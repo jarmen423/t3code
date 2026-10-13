@@ -5,7 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import { writeFakeCli } from "../../testUtils/fakeCli.ts";
+import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import {
   applyDevinAcpModelSelection,
   buildDevinAcpSpawnInput,

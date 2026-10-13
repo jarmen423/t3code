@@ -1,6 +1,8 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { HermesSettings, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import { HermesSettings } from "@t3tools/provider-hermes/settings";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -11,6 +13,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderHostLive from "./ProviderHostLive.ts";
 import { HERMES_DEFAULT_MODEL_SLUG } from "./acp/HermesAcpSupport.ts";
@@ -79,6 +82,8 @@ const testLayer = ProviderHostLive.layer.pipe(
     }),
   ),
   Layer.provideMerge(ServerSettings.layerTest()),
+  Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
+  Layer.provideMerge(NodeCrypto.layer),
   Layer.provide(
     ServerConfig.layerTest(process.cwd(), { prefix: "t3-hermes-provider-test-" }).pipe(
       Layer.provide(NodeServices.layer),
@@ -173,14 +178,14 @@ describe("buildHermesModelsFromSession", () => {
     expect(models[2]?.subProvider).toBe("zai-responses");
   });
 
-  it("appends custom models after native ones and dedupes them against built-in slugs", () => {
+  it("appends custom models after native ones and renames colliding built-in slugs", () => {
     const models = buildHermesModelsFromSession(
       {
         currentModelId: "openrouter:a",
         availableModels: [{ modelId: "openrouter:a", name: "A" }],
       },
       [
-        { slug: "openrouter:a", name: "Collides with native" },
+        { slug: "openrouter:a", name: "Renamed native" },
         "ollama:local",
         { slug: "xai-oauth:custom-grok", name: "Custom Grok" },
         HERMES_DEFAULT_MODEL_SLUG,
@@ -192,10 +197,11 @@ describe("buildHermesModelsFromSession", () => {
       "ollama:local",
       "xai-oauth:custom-grok",
     ]);
-    // The colliding custom entry and the product-slug duplicate are dropped;
-    // the native row keeps its built-in identity.
+    // A named custom entry whose slug matches a built-in renames that
+    // built-in instead of appending a duplicate; the product-slug duplicate
+    // is still dropped.
     expect(models[1]?.isCustom).toBe(false);
-    expect(models[1]?.name).toBe("A");
+    expect(models[1]?.name).toBe("Renamed native");
     expect(models[2]?.isCustom).toBe(true);
     // A bare-slug custom entry falls back to the slug for its display name.
     expect(models[2]?.name).toBe("ollama:local");

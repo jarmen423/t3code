@@ -364,18 +364,6 @@ export const CursorIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
-export const GrokIcon: Icon = ({ className, ...props }) => (
-  <svg
-    {...props}
-    viewBox="0 0 24 24"
-    fill="none"
-    className={cn("fill-[#0F0F0F] dark:fill-[#F5F5F5]", className)}
-  >
-    <path d="M9.26905 15.284L17.2479 9.36086C17.6391 9.07047 18.1981 9.18374 18.3845 9.63478C19.3655 12.0135 18.9272 14.8721 16.9755 16.8349C15.0238 18.7976 12.3082 19.228 9.8261 18.2477L7.1146 19.5102C11.0037 22.1834 15.7263 21.5223 18.6774 18.5525C21.0182 16.1985 21.7432 12.9897 21.0653 10.0961L21.0714 10.1023C20.0884 5.85143 21.3131 4.15233 23.8218 0.677913C23.8812 0.595532 23.9406 0.513151 24 0.428711L20.6987 3.74866V3.73836L9.267 15.2861" />
-    <path d="M7.62249 16.7237C4.83113 14.0422 5.3124 9.89222 7.69417 7.49905C9.45541 5.72786 12.341 5.00497 14.86 6.06768L17.5653 4.81138C17.0779 4.45714 16.4533 4.07613 15.7365 3.80839C12.4966 2.46764 8.6178 3.13492 5.98413 5.78141C3.45081 8.32904 2.65415 12.2463 4.02219 15.5889C5.04412 18.0871 3.36889 19.8541 1.68137 21.6377C1.08337 22.2699 0.483318 22.9022 0 23.5716L7.62045 16.7257" />
-  </svg>
-);
-
 export const TraeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 24 24" fill="currentColor">
     {/* Back rectangle: left strip + bottom strip drawn separately — empty bottom-left corner is the gap between them */}
@@ -690,43 +678,6 @@ export const HermesIcon: Icon = (props) => (
   </svg>
 );
 
-export const DevinIcon: Icon = ({ className, ...props }) => (
-  <svg
-    {...props}
-    viewBox="0 0 263 300"
-    fill="none"
-    className={cn("fill-black dark:fill-white", className)}
-  >
-    <path d="M1.84577e-10 100.797V38.6224C1.88813e-05 35.8899 1.45777 33.365 3.82414 31.9988L57.6539 0.920185C60.0203 -0.446051 62.9358 -0.446051 65.3022 0.920185L119.132 31.9988C121.498 33.3651 122.956 35.8899 122.956 38.6224V70.375C123.192 80.9262 128.769 91.103 138.577 96.7655C148.384 102.428 159.986 102.169 169.242 97.0979L196.74 81.2217C199.107 79.8554 202.022 79.8554 204.388 81.2217L258.218 112.3C260.585 113.667 262.042 116.191 262.042 118.924V181.081C262.042 183.814 260.585 186.339 258.218 187.705L204.388 218.783C202.022 220.15 199.107 220.15 196.74 218.783L169.464 203.036C160.173 197.847 148.465 197.536 138.579 203.244C128.772 208.906 123.195 219.083 122.959 229.634V261.378C122.959 264.111 121.501 266.635 119.135 268.002L65.3048 299.08C62.9384 300.447 60.0229 300.447 57.6566 299.08L3.82673 268.002C1.46036 266.635 0.00260562 264.111 0.00260562 261.378V199.221C0.0026245 196.488 1.46038 193.963 3.82675 192.597L57.6565 161.519C60.0229 160.152 62.9384 160.152 65.3048 161.519L92.8656 177.431C102.11 182.467 113.679 182.711 123.463 177.062C133.349 171.355 138.934 161.06 139.086 150.419C138.85 139.868 133.274 128.601 123.466 122.938C113.658 117.276 102.056 117.534 92.8007 122.606L65.1758 138.645C62.7991 140.025 59.8649 140.024 57.4894 138.642L3.80216 107.407C1.44816 106.038 -1.88809e-05 103.52 1.84577e-10 100.797Z" />
-  </svg>
-);
-
-export const OpenCodeIcon: Icon = (props) => (
-  <svg {...props} viewBox="0 0 32 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <g clipPath="url(#opencode__clip0_1311_94969)">
-      <path
-        data-opencode-hole="true"
-        className="dark:hidden"
-        d="M24 32H8V16H24V32Z"
-        fill="#CFCECD"
-      />
-      <path className="dark:hidden" d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" fill="#211E1E" />
-      <path
-        data-opencode-hole="true"
-        className="hidden dark:block"
-        d="M24 32H8V16H24V32Z"
-        fill="#4B4646"
-      />
-      <path className="hidden dark:block" d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" fill="#F1ECEC" />
-    </g>
-    <defs>
-      <clipPath id="opencode__clip0_1311_94969">
-        <rect width="32" height="40" fill="white" />
-      </clipPath>
-    </defs>
-  </svg>
-);
-
 export const ACPRegistryIcon: Icon = ({ className, ...props }) => (
   <svg
     {...props}
@@ -748,6 +699,14 @@ export const ForgejoIcon: Icon = (props) => (
       <circle cx="142" cy="88" r="18" stroke="#d40000" strokeWidth="15" />
       <circle cx="58" cy="180" r="18" stroke="#d40000" strokeWidth="15" />
     </g>
+  </svg>
+);
+
+// GitCafe's own mark, from https://git.cafe/favicon.svg, inset so the full-bleed square does not
+// read heavier than the round and cut-out marks beside it.
+export const GitCafeIcon: Icon = (props) => (
+  <svg viewBox="0 0 64 64" aria-hidden="true" {...props}>
+    <rect x="4.8" y="4.8" width="54.4" height="54.4" fill="#a78bfa" />
   </svg>
 );
 
@@ -810,38 +769,3 @@ export const MacAccessibilityIcon: Icon = (props) => {
     </svg>
   );
 };
-
-// Codex's Computer Use app mark, shown on computer-use rows in the work log.
-export const ComputerUseAppIcon: Icon = (props) => {
-  const gradientId = `${useId().replaceAll(":", "")}-computer-use-app-gradient`;
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
-      <defs>
-        <linearGradient id={gradientId} x1="2" y1="2" x2="22" y2="22">
-          <stop offset="0" stopColor="#00dff0" />
-          <stop offset="0.42" stopColor="#3b9cff" />
-          <stop offset="0.72" stopColor="#b044f5" />
-          <stop offset="1" stopColor="#ff78b6" />
-        </linearGradient>
-      </defs>
-      <rect x="1" y="1" width="22" height="22" rx="5" fill={`url(#${gradientId})`} />
-      <path
-        d="m7.2 6.2 10.5 4.1-4.2 2.1-2 4.7z"
-        fill="white"
-        stroke="#315cff"
-        strokeWidth="1.1"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-};
-
-export const MuseIcon: Icon = (props) => (
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 150.4828 100" fill="none" {...props}>
-    <path
-      d="M107.9999847,0.0000013c-12.3391113,0-21.984787,9.2935991-30.7164001,21.0993118 C65.2847366,5.821527,55.2499847,0,43.2413788,0C18.7586193,0,0,31.8620682,0,65.5862122 C0,86.6896515,10.2095623,100,27.3103466,100c12.3080502,0,21.1600361-5.8025894,36.8965454-33.3103409 c0,0,6.5597382-11.5841255,11.0725021-19.563858c1.5813522,2.5531845,3.2431107,5.3001404,4.9964676,8.2535095 l7.379303,12.4137955C102.0298843,91.8478851,110.039032,100,124.5517273,100 c16.6595764,0,25.9310303-13.4923325,25.9310303-35.0344849 C150.4827576,29.6551723,131.301178,0.0000013,107.9999847,0.0000013z M52.2068977,59.2413788 c-12.7586212,20-17.1724167,24.4827576-24.2758656,24.4827576c-7.3103428,0-11.6551704-6.4178314-11.6551704-17.8620682 c0-24.4827576,12.2068977-49.5172424,26.7586231-49.5172424c7.880127,0,14.4653816,4.5510426,24.5522308,18.9913158 C58.0087967,50.0272293,52.2068977,59.2413788,52.2068977,59.2413788z M100.3597336,56.7235756L91.5367355,42.00877 c-2.3876724-3.8832092-4.6757278-7.451458-6.8838348-10.7230263 c7.951973-12.273531,14.5113449-18.3891907,22.3126144-18.3891907c16.2069016,0,29.1724243,23.8620682,29.1724243,53.1724091 c0,11.1724167-3.6593475,17.6551743-11.2413864,17.6551743 C117.6294937,83.7241364,114.1578674,78.924736,100.3597336,56.7235756z"
-      fill="currentColor"
-      fillRule="evenodd"
-    />
-  </svg>
-);

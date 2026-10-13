@@ -1,4 +1,5 @@
-import { type DevinSettings, ProviderDriverKind, type RuntimeMode } from "@t3tools/contracts";
+import { ProviderDriverKind, type RuntimeMode } from "@t3tools/contracts";
+import type { DevinSettings } from "@t3tools/provider-devin/settings";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Crypto from "effect/Crypto";
@@ -12,7 +13,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
-import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 /**
  * Product slug for "keep the model Devin is configured with". It is not a

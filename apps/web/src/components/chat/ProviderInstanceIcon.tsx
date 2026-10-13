@@ -3,18 +3,7 @@ import { type CSSProperties, memo, useState } from "react";
 import { providerInstanceInitials } from "@t3tools/client-runtime/state/provider-instance-display";
 
 import { ProviderDriverKind, resolveProviderInstanceIcon } from "@t3tools/contracts";
-import {
-  AntigravityIcon,
-  ClaudeAI,
-  CursorIcon,
-  DevinIcon,
-  HermesIcon,
-  GrokIcon,
-  MuseIcon,
-  Icon,
-  OpenAI,
-  OpenCodeIcon,
-} from "../Icons";
+import { AntigravityIcon, ClaudeAI, HermesIcon, Icon, OpenAI } from "../Icons";
 
 import { cn } from "~/lib/utils";
 import { providerClients } from "../settings/providerDriverMeta";
@@ -28,21 +17,13 @@ import {
 const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
   [ProviderDriverKind.make("codex")]: OpenAI,
   [ProviderDriverKind.make("claudeAgent")]: ClaudeAI,
-  [ProviderDriverKind.make("opencode")]: OpenCodeIcon,
-  [ProviderDriverKind.make("cursor")]: CursorIcon,
-  [ProviderDriverKind.make("grok")]: GrokIcon,
-  [ProviderDriverKind.make("muse")]: MuseIcon,
   [ProviderDriverKind.make("antigravity")]: AntigravityIcon,
   [ProviderDriverKind.make("hermes")]: HermesIcon,
-  [ProviderDriverKind.make("devin")]: DevinIcon,
 };
 
 const PROVIDER_TEXT_COLOR_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
   [ProviderDriverKind.make("codex")]: "text-black dark:text-white",
   [ProviderDriverKind.make("claudeAgent")]: "text-[#d97757]",
-  [ProviderDriverKind.make("cursor")]: "text-[#26251E] dark:text-[#EDECEC]",
-  [ProviderDriverKind.make("grok")]: "text-[#0F0F0F] dark:text-[#F5F5F5]",
-  [ProviderDriverKind.make("opencode")]: "text-[#211E1E] dark:text-[#F1ECEC]",
   [ProviderDriverKind.make("antigravity")]: "text-[#5b87bf]",
 };
 

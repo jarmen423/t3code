@@ -1,0 +1,28 @@
+{
+  "name": "@t3tools/provider-hermes",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./client": {
+      "import": "./src/client.ts",
+      "types": "./src/client.ts"
+    },
+    "./settings": {
+      "import": "./src/settings.ts",
+      "types": "./src/settings.ts"
+    }
+  },
+  "scripts": {
+    "test": "vp test run --config ../../vite.config.ts --dir .",
+    "typecheck": "tsc-rs --noEmit"
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/provider-core": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

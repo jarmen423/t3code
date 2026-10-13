@@ -1,4 +1,5 @@
-import { HermesSettings, ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind } from "@t3tools/contracts";
+import { HermesSettings } from "@t3tools/provider-hermes/settings";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -10,7 +11,9 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -19,14 +22,14 @@ import { ProviderDriverError } from "../Errors.ts";
 import { makeForkAcpAdapterV2 } from "../../orchestration-v2/Adapters/ForkAcpAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { makeHermesProvider, type HermesProbeResult } from "../HermesProvider.ts";
-import { ProviderEventLoggers } from "../ProviderEventLoggers.ts";
+import { ProviderEventLoggers } from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeHermesAcpRuntime, resolveHermesAuthMethodId } from "../acp/HermesAcpSupport.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
   type ProviderInstance,
 } from "@t3tools/provider-core/server/driver";
-import { withInstanceIdentity } from "./instanceIdentity.ts";
+import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 
@@ -48,7 +51,9 @@ export type HermesDriverEnv =
   | Path.Path
   | ProviderEventLoggers
   | ServerConfig
-  | ServerSettingsService;
+  | ServerSettingsService
+  | typeof AgentScope
+  | McpProviderSessions.McpProviderSessions;
 
 /**
  * Hermes Agent speaks ACP over `hermes acp`. The process always runs on the
@@ -68,7 +73,7 @@ export const HermesDriver: ProviderDriver<HermesSettings, HermesDriverEnv> = {
       const crypto = yield* Crypto.Crypto;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const serverConfig = yield* ServerConfig;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
+      const processEnv = yield* mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER,
         instanceId,

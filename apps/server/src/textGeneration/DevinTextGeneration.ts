@@ -6,7 +6,8 @@ import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpErrors from "effect-acp/errors";
 
-import { type DevinSettings, TextGenerationError } from "@t3tools/contracts";
+import { TextGenerationError } from "@t3tools/contracts";
+import type { DevinSettings } from "@t3tools/provider-devin/settings";
 
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import {

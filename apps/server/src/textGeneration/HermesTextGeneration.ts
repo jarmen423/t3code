@@ -6,7 +6,8 @@ import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpErrors from "effect-acp/errors";
 
-import { type HermesSettings, TextGenerationError } from "@t3tools/contracts";
+import { TextGenerationError } from "@t3tools/contracts";
+import type { HermesSettings } from "@t3tools/provider-hermes/settings";
 
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import {
