@@ -12,7 +12,6 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import { AgentScope } from "@t3tools/shared/AgentScope";
 import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
@@ -54,7 +53,6 @@ export type DevinDriverEnv =
   | ProviderEventLoggers
   | ServerConfig
   | ServerSettingsService
-  | typeof AgentScope
   | McpProviderSessions.McpProviderSessions;
 
 /**
