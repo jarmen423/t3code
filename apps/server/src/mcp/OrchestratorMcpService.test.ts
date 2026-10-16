@@ -803,6 +803,8 @@ describe("OrchestratorMcpService provider resolution", () => {
     readonly driver: ProviderDriverKind;
     readonly model?: string;
     readonly enabled?: boolean;
+    /** Puts one weekly window at this share used, resetting long after the test clock. */
+    readonly usedPercent?: number;
   }): ServerProvider => ({
     instanceId: input.instanceId,
     driver: input.driver,
@@ -818,6 +820,22 @@ describe("OrchestratorMcpService provider resolution", () => {
         : [{ slug: input.model, name: input.model, isCustom: false, capabilities: null }],
     slashCommands: [],
     skills: [],
+    ...(input.usedPercent === undefined
+      ? {}
+      : {
+          usageLimits: {
+            checkedAt: "2026-09-13T00:00:00.000Z",
+            windows: [
+              {
+                id: "weekly",
+                kind: "weekly",
+                label: "Weekly",
+                usedPercent: input.usedPercent,
+                resetsAt: "2099-01-01T00:00:00.000Z",
+              },
+            ],
+          },
+        }),
   });
 
   /** A registry whose probes report the same snapshots it already holds. */
@@ -1074,6 +1092,86 @@ describe("OrchestratorMcpService provider resolution", () => {
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );
+
+  it.effect("reports each instance's quota left and omits it when there is none", () =>
+    Effect.gen(function* () {
+      const spentInstanceId = ProviderInstanceId.make("codex-spent");
+      const keyInstanceId = ProviderInstanceId.make("codex-key");
+      const driver = ProviderDriverKind.make("codex");
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.succeed(parentProjection([])),
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([
+          providerSnapshot({ instanceId: codexInstanceId, driver, usedPercent: 37.4 }),
+          providerSnapshot({ instanceId: spentInstanceId, driver, usedPercent: 100 }),
+          {
+            ...providerSnapshot({ instanceId: keyInstanceId, driver }),
+            usageLimits: {
+              checkedAt: "2026-09-13T00:00:00.000Z",
+              windows: [],
+              unavailable: { reason: "unsupported" },
+            },
+          },
+        ]),
+        adapterRegistryLayer([codexInstanceId, spentInstanceId, keyInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const byId = new Map(
+          (yield* service.capabilities(scope)).providers.map((provider) => [
+            provider.providerInstanceId,
+            provider,
+          ]),
+        );
+        const window = { label: "Weekly", resetsAt: "2099-01-01T00:00:00.000Z" };
+        assert.deepEqual(byId.get(codexInstanceId)?.usage, {
+          checkedAt: "2026-09-13T00:00:00.000Z",
+          exhausted: false,
+          windows: [{ ...window, remainingPercent: 63 }],
+        });
+        assert.deepEqual(byId.get(spentInstanceId)?.usage, {
+          checkedAt: "2026-09-13T00:00:00.000Z",
+          exhausted: true,
+          windows: [{ ...window, remainingPercent: 0 }],
+        });
+        // Exhaustion is advisory: the instance stays runnable.
+        assert.isTrue(byId.get(spentInstanceId)?.canRunChildTask);
+        assert.isUndefined(byId.get(keyInstanceId)?.usage);
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
+  it("treats a used-up window as exhausted only until its reset passes", () => {
+    const limits = (resetsAt?: string) => ({
+      checkedAt: "2026-10-16T00:00:00.000Z",
+      windows: [
+        {
+          id: "weekly",
+          kind: "weekly" as const,
+          label: "Weekly",
+          usedPercent: 100,
+          ...(resetsAt === undefined ? {} : { resetsAt }),
+        },
+      ],
+    });
+    const now = Date.parse("2026-10-16T12:00:00.000Z");
+    assert.isTrue(OrchestratorMcpService.usageExhausted(limits("2026-10-17T18:36:22.000Z"), now));
+    assert.isFalse(OrchestratorMcpService.usageExhausted(limits("2026-10-16T02:34:51.000Z"), now));
+    assert.isTrue(OrchestratorMcpService.usageExhausted(limits(), now));
+    assert.isFalse(
+      OrchestratorMcpService.usageExhausted(
+        { ...limits(), unavailable: { reason: "probeFailed" as const } },
+        now,
+      ),
+    );
+  });
 
   it.effect(
     "delegates to an Antigravity instance whose adapter resolves through the registry",
@@ -1751,6 +1849,8 @@ describe("OrchestratorMcpService provider resolution", () => {
             explicit: false,
             selectedInstanceId: codexInstanceId,
             candidateDriver: driver,
+            inheritedExhausted: false,
+            peerExhausted: false,
           },
           {
             name: "unavailable-inherited-falls-back-to-healthy-peer",
@@ -1759,6 +1859,8 @@ describe("OrchestratorMcpService provider resolution", () => {
             explicit: false,
             selectedInstanceId: codexAltInstanceId,
             candidateDriver: driver,
+            inheritedExhausted: false,
+            peerExhausted: false,
           },
           {
             name: "no-available-peer",
@@ -1767,6 +1869,8 @@ describe("OrchestratorMcpService provider resolution", () => {
             explicit: false,
             selectedInstanceId: null,
             candidateDriver: driver,
+            inheritedExhausted: false,
+            peerExhausted: false,
           },
           {
             name: "cross-driver-no-available-candidate",
@@ -1775,6 +1879,8 @@ describe("OrchestratorMcpService provider resolution", () => {
             explicit: false,
             selectedInstanceId: null,
             candidateDriver: claudeDriver,
+            inheritedExhausted: false,
+            peerExhausted: false,
           },
           {
             name: "explicit-unavailable",
@@ -1783,6 +1889,8 @@ describe("OrchestratorMcpService provider resolution", () => {
             explicit: true,
             selectedInstanceId: null,
             candidateDriver: driver,
+            inheritedExhausted: false,
+            peerExhausted: false,
           },
           {
             name: "explicit-healthy",
@@ -1791,6 +1899,38 @@ describe("OrchestratorMcpService provider resolution", () => {
             explicit: true,
             selectedInstanceId: codexAltInstanceId,
             candidateDriver: driver,
+            inheritedExhausted: false,
+            peerExhausted: false,
+          },
+          {
+            name: "exhausted-inherited-prefers-peer-with-quota",
+            inheritedEnabled: true,
+            peerEnabled: true,
+            explicit: false,
+            selectedInstanceId: codexAltInstanceId,
+            candidateDriver: driver,
+            inheritedExhausted: true,
+            peerExhausted: false,
+          },
+          {
+            name: "all-exhausted-keeps-inherited",
+            inheritedEnabled: true,
+            peerEnabled: true,
+            explicit: false,
+            selectedInstanceId: codexInstanceId,
+            candidateDriver: driver,
+            inheritedExhausted: true,
+            peerExhausted: true,
+          },
+          {
+            name: "explicit-exhausted-still-runs",
+            inheritedEnabled: true,
+            peerEnabled: true,
+            explicit: true,
+            selectedInstanceId: codexAltInstanceId,
+            candidateDriver: driver,
+            inheritedExhausted: false,
+            peerExhausted: true,
           },
         ] as const;
 
@@ -1835,12 +1975,14 @@ describe("OrchestratorMcpService provider resolution", () => {
                 driver,
                 model: "gpt-5.4",
                 enabled: testCase.inheritedEnabled,
+                usedPercent: testCase.inheritedExhausted ? 100 : 40,
               }),
               providerSnapshot({
                 instanceId: codexAltInstanceId,
                 driver: testCase.candidateDriver,
                 model: "codex-alt-model",
                 enabled: testCase.peerEnabled,
+                usedPercent: testCase.peerExhausted ? 100 : 40,
               }),
             ]),
             adapterRegistryLayer([codexInstanceId, codexAltInstanceId]),
@@ -1913,7 +2055,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               testCase.selectedInstanceId,
               testCase.name,
             );
-            if (testCase.name === "healthy-inherited") {
+            if (testCase.selectedInstanceId === codexInstanceId) {
               assert.deepEqual(request.modelSelection, parentModelSelection, testCase.name);
             } else {
               assert.equal(request.modelSelection.model, "codex-alt-model", testCase.name);

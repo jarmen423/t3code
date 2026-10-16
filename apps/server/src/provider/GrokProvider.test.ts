@@ -558,6 +558,31 @@ describe("Grok usage limits", () => {
     ]);
   });
 
+  it("reads a period without a percentage as nothing used yet", () => {
+    // The shape xAI returns at the start of a weekly period, before any usage registers.
+    const limits = grokUsageResponseToLimits(
+      {
+        config: {
+          currentPeriod: {
+            type: "USAGE_PERIOD_TYPE_WEEKLY",
+            end: "2026-10-23T02:34:51.402099+00:00",
+          },
+        },
+      },
+      checkedAt,
+    );
+    expect(limits.unavailable).toBeUndefined();
+    expect(limits.windows).toEqual([
+      {
+        id: "subscription",
+        kind: "weekly",
+        label: "Weekly",
+        usedPercent: 0,
+        resetsAt: "2026-10-23T02:34:51.402Z",
+      },
+    ]);
+  });
+
   it("does not invent allowance or reset dates when billing omits them", () => {
     for (const response of [{}, { config: {} }, { config: { creditUsagePercent: NaN } }]) {
       const limits = grokUsageResponseToLimits(response, checkedAt);

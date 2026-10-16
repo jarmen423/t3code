@@ -105,7 +105,8 @@ export const OrchestratorMcpTarget = Schema.Struct({
   ),
   driverKind: Schema.optional(
     ProviderDriverKind.annotate({
-      description: "Provider driver kind; prefer providerInstanceId when available.",
+      description:
+        "Provider driver kind; prefer providerInstanceId when available. Picks an instance of the driver, preferring ones whose quota is not exhausted.",
     }),
   ),
   model: Schema.optional(
@@ -487,6 +488,26 @@ export const OrchestratorMcpThreadInterruptResult = Schema.Struct({
 });
 export type OrchestratorMcpThreadInterruptResult = typeof OrchestratorMcpThreadInterruptResult.Type;
 
+/**
+ * Subscription quota from the instance's last usage probe, so agents can pick
+ * an account with quota left. Advisory: a used-up window may cover only some
+ * models (Claude's model-scoped buckets), and the probe can be stale.
+ */
+export const OrchestratorMcpProviderUsage = Schema.Struct({
+  /** When the provider last reported these windows. */
+  checkedAt: IsoDateTime,
+  /** A window is used up and its reset had not passed when this was read; turns will likely fail. */
+  exhausted: Schema.Boolean,
+  windows: Schema.Array(
+    Schema.Struct({
+      label: Schema.String,
+      remainingPercent: Schema.Number,
+      resetsAt: Schema.optional(IsoDateTime),
+    }),
+  ),
+});
+export type OrchestratorMcpProviderUsage = typeof OrchestratorMcpProviderUsage.Type;
+
 export const OrchestratorMcpProviderCapability = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   driverKind: ProviderDriverKind,
@@ -504,6 +525,8 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
   canRunChildTask: Schema.Boolean,
   canRunCrossProviderChildTask: Schema.Boolean,
   constraints: Schema.Array(Schema.String),
+  /** Omitted when the provider reports no quota windows (API keys, failed probes). */
+  usage: Schema.optional(OrchestratorMcpProviderUsage),
 });
 export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCapability.Type;
 

@@ -56,9 +56,12 @@ import {
   type ScheduledTask,
   type ScheduledTaskUpsertInput,
   type ServerProvider,
+  type ServerProviderUsageLimits,
   ThreadId,
+  type OrchestratorMcpProviderUsage,
 } from "@t3tools/contracts";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import { remainingPercent } from "@t3tools/shared/usageLimits";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -286,6 +289,42 @@ function providerConstraints(
     constraints.push("Provider is not authenticated.");
   }
   return constraints;
+}
+
+/**
+ * Whether a quota window is used up and its reset had not passed at `nowMs`.
+ * Never a constraint: one spent window can leave other models open (Claude's
+ * model-scoped buckets) and the probe can be stale, so it only steers
+ * driver-only delegation toward instances with quota left.
+ */
+export function usageExhausted(
+  limits: ServerProviderUsageLimits | undefined,
+  nowMs: number,
+): boolean {
+  if (limits === undefined || limits.unavailable !== undefined) return false;
+  return limits.windows.some(
+    (window) =>
+      window.usedPercent >= 100 &&
+      (window.resetsAt === undefined || Date.parse(window.resetsAt) > nowMs),
+  );
+}
+
+function providerUsage(
+  limits: ServerProviderUsageLimits | undefined,
+  nowMs: number,
+): OrchestratorMcpProviderUsage | undefined {
+  if (limits === undefined || limits.unavailable !== undefined || limits.windows.length === 0) {
+    return undefined;
+  }
+  return {
+    checkedAt: limits.checkedAt,
+    exhausted: usageExhausted(limits, nowMs),
+    windows: limits.windows.map((window) => ({
+      label: window.label,
+      remainingPercent: remainingPercent(window),
+      ...(window.resetsAt === undefined ? {} : { resetsAt: window.resetsAt }),
+    })),
+  };
 }
 
 /**
@@ -1219,10 +1258,15 @@ const make = Effect.gen(function* () {
         const inheritedCandidate = healthyCandidates.find(
           (candidate) => candidate.instanceId === input.parent.thread.modelSelection.instanceId,
         );
-        const orderedCandidates = [
-          ...(inheritedCandidate === undefined ? [] : [inheritedCandidate]),
-          ...healthyCandidates.filter((candidate) => candidate !== inheritedCandidate),
-        ];
+        // Instances with quota left come first, the parent's leading each group;
+        // used-up ones stay as a last resort since the probe may be stale.
+        const nowMs = yield* Clock.currentTimeMillis;
+        const rank = (candidate: ServerProvider) =>
+          Number(usageExhausted(candidate.usageLimits, nowMs)) * 2 +
+          Number(candidate !== inheritedCandidate);
+        const orderedCandidates = healthyCandidates.toSorted(
+          (left, right) => rank(left) - rank(right),
+        );
         for (const candidate of orderedCandidates) {
           const enabledForProject =
             input.skipProjectEnablementFilter === true ||
@@ -1901,6 +1945,7 @@ const make = Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
         const providers = yield* loadProviders;
         const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
+        const nowMs = yield* Clock.currentTimeMillis;
         // Models the user hid from pickers stay out of the catalog agents choose from.
         const modelPreferences = yield* serverSettings.getSettings.pipe(
           Effect.map((settings) => settings.providerModelPreferences ?? {}),
@@ -1917,6 +1962,7 @@ const make = Effect.gen(function* () {
               provider,
               orchestrationCapableInstanceIds.has(provider.instanceId),
             );
+            const usage = providerUsage(provider.usageLimits, nowMs);
             return {
               providerInstanceId: provider.instanceId,
               driverKind: provider.driver,
@@ -1942,6 +1988,7 @@ const make = Effect.gen(function* () {
               canRunChildTask: constraints.length === 0,
               canRunCrossProviderChildTask: constraints.length === 0,
               constraints: [...constraints],
+              ...(usage === undefined ? {} : { usage }),
             };
           }),
           features: {
