@@ -1,6 +1,5 @@
 import {
   resolveEnvironmentMachineKind,
-  resolveProviderInstanceIcon,
   type EnvironmentId,
   type EnvironmentMachineKind,
   type ServerConfig,
@@ -10,7 +9,7 @@ import { Atom } from "effect/reactivity";
 
 export type ThreadListProvider = Pick<
   ServerProvider,
-  "instanceId" | "driver" | "displayName" | "accentColor" | "iconUrl" | "instanceIcon"
+  "instanceId" | "driver" | "enabled" | "displayName" | "accentColor" | "iconUrl"
 >;
 
 const capabilityKeys = [
@@ -26,13 +25,13 @@ const capabilityKeys = [
 function selectEnvironment(config: ServerConfig) {
   return {
     providers: config.providers.map(
-      ({ instanceId, driver, displayName, accentColor, iconUrl, instanceIcon }) => ({
+      ({ instanceId, driver, enabled, displayName, accentColor, iconUrl }) => ({
         instanceId,
         driver,
+        enabled,
         displayName,
         accentColor,
         iconUrl,
-        instanceIcon: resolveProviderInstanceIcon(instanceIcon) ?? undefined,
       }),
     ),
     machineKind: resolveEnvironmentMachineKind(config),
@@ -53,10 +52,10 @@ function sameProviders(
       return (
         provider.instanceId === other.instanceId &&
         provider.driver === other.driver &&
+        provider.enabled === other.enabled &&
         provider.displayName === other.displayName &&
         provider.accentColor === other.accentColor &&
-        provider.iconUrl === other.iconUrl &&
-        provider.instanceIcon === other.instanceIcon
+        provider.iconUrl === other.iconUrl
       );
     })
   );
@@ -96,7 +95,6 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
   };
 }
 
-/** Provider freshness and model catalogs do not affect the navigation lists. */
 export function createThreadListEnvironmentsAtom(
   configsAtom: Atom.Atom<ReadonlyMap<EnvironmentId, ServerConfig>>,
 ) {
