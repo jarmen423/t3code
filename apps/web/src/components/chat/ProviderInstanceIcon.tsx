@@ -7,7 +7,7 @@ import {
 } from "@t3tools/client-runtime/state/provider-instance-display";
 
 import { ProviderDriverKind } from "@t3tools/contracts";
-import { AntigravityIcon, ClaudeAI, Icon, OpenAI } from "../Icons";
+import { AntigravityIcon, ClaudeAI, HermesIcon, Icon, OpenAI } from "../Icons";
 
 import { cn } from "~/lib/utils";
 import { providerClients } from "../settings/providerDriverMeta";
@@ -22,6 +22,9 @@ const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
   [ProviderDriverKind.make("codex")]: OpenAI,
   [ProviderDriverKind.make("claudeAgent")]: ClaudeAI,
   [ProviderDriverKind.make("antigravity")]: AntigravityIcon,
+  // hermesClient ships no package icon (its glyph is a raster PNG), so the
+  // hand-drawn HermesIcon from Icons is the web fallback for Hermes.
+  [ProviderDriverKind.make("hermes")]: HermesIcon,
 };
 
 const PROVIDER_TEXT_COLOR_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {

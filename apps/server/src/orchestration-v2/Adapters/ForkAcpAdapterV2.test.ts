@@ -141,37 +141,51 @@ describe("fork ACP providers on orchestration v2", () => {
         rawInput: { toolName: "delegate_task", tasks: [{ goal: "Review" }, { goal: "Test" }] },
       },
     };
-    expect(first.extractSubagentUpdates?.(tool, "turn-1")).toHaveLength(2);
-    expect(second.extractSubagentUpdates?.(tool, "turn-1")).toHaveLength(2);
+    // Upstream's flavor hook surfaces one child update per call; the
+    // delegate_task's children drain in order, per flavor instance.
+    expect(first.extractSubagentUpdate?.(tool)).toMatchObject({
+      nativeTaskId: "hermes:delegate-1:0",
+      status: "running",
+    });
+    expect(first.extractSubagentUpdate?.(tool)).toMatchObject({
+      nativeTaskId: "hermes:delegate-1:1",
+      status: "running",
+    });
+    expect(second.extractSubagentUpdate?.(tool)).toMatchObject({
+      nativeTaskId: "hermes:delegate-1:0",
+      status: "running",
+    });
     expect(
-      first.extractSubagentUpdates?.(
-        {
-          ...tool,
-          status: "inProgress",
-          data: {
-            ...tool.data,
-            rawOutput: {
-              toolName: "delegate_task",
-              taskProgress: {
-                sequence: 1,
-                taskIndex: 1,
-                type: "completed",
-                status: "completed",
-                summary: "Tests passed",
-              },
+      first.extractSubagentUpdate?.({
+        ...tool,
+        status: "inProgress",
+        data: {
+          ...tool.data,
+          rawOutput: {
+            toolName: "delegate_task",
+            taskProgress: {
+              sequence: 1,
+              taskIndex: 1,
+              type: "completed",
+              status: "completed",
+              summary: "Tests passed",
             },
           },
         },
-        "turn-1",
-      ),
-    ).toMatchObject([
-      { nativeTaskId: "hermes:delegate-1:1", status: "completed", result: "Tests passed" },
-    ]);
-    expect(first.settleSubagents?.("turn-1")).toMatchObject([
-      { nativeTaskId: "hermes:delegate-1:0", status: "interrupted" },
-    ]);
-    expect(first.extractSubagentUpdates?.(tool, "turn-2")).toEqual([]);
-    expect(second.settleSubagents?.("turn-1")).toHaveLength(2);
+      }),
+    ).toMatchObject({
+      nativeTaskId: "hermes:delegate-1:1",
+      status: "completed",
+      result: "Tests passed",
+    });
+    // Parent-tool completion settles the remaining child through the
+    // tracker; turn-teardown interruption belongs to the adapter now
+    // (subagentsIdleOnTurnCompletion), not the flavor.
+    expect(first.extractSubagentUpdate?.({ ...tool, status: "completed" })).toMatchObject({
+      nativeTaskId: "hermes:delegate-1:0",
+      status: "completed",
+    });
+    expect(first.extractSubagentUpdate?.(tool)).toBeUndefined();
   });
 });
 

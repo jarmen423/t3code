@@ -117,7 +117,6 @@ function SubagentMetadata(props: {
       <ProviderIcon
         provider={provider?.driver ?? subagent.driver}
         iconUrl={provider?.iconUrl}
-        instanceIcon={provider?.instanceIcon}
         size={12}
       />
       <Text className="min-w-0 shrink text-xs text-foreground-muted" numberOfLines={1}>

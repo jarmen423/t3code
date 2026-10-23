@@ -2,11 +2,9 @@ import { ProviderDriverKind, type RuntimeMode } from "@t3tools/contracts";
 import type { DevinSettings } from "@t3tools/provider-devin/settings";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Scope from "effect/Scope";
 import { ChildProcess } from "effect/process";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
@@ -107,39 +105,36 @@ export const probeDevinAuthStatus = Effect.fn("probeDevinAuthStatus")(function* 
   return "unknown";
 });
 
-export const makeDevinAcpRuntime = (
+export const makeDevinAcpRuntime = Effect.fn("DevinAcpSupport.makeRuntime")(function* (
   input: DevinAcpRuntimeInput,
-): Effect.Effect<
-  AcpSessionRuntime.AcpSessionRuntime["Service"],
-  EffectAcpErrors.AcpError,
-  Crypto.Crypto | Scope.Scope
-> =>
-  Effect.gen(function* () {
-    const acpContext = yield* Layer.build(
-      AcpSessionRuntime.layer({
-        ...input,
-        spawn: buildDevinAcpSpawnInput(input.devinSettings, input.cwd, input.environment),
-        authMethodId: resolveDevinAuthMethodId,
-        authenticateOnAuthRequired: false,
-        // Devin resolves a cancelled `session/prompt` promptly and runs the
-        // next prompt normally — nothing queues behind the cancelled turn.
-        cancelBehavior: "interrupt",
-        // Devin edits files and runs commands through its own tools; it never
-        // calls back into the client for fs or terminal access.
-        clientCapabilities: input.clientCapabilities ?? {
-          fs: { readTextFile: false, writeTextFile: false },
-          terminal: false,
-        },
-      }).pipe(
-        Layer.provide(
-          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
-        ),
+) {
+  const acpContext = yield* Layer.build(
+    AcpSessionRuntime.layer({
+      ...input,
+      spawn: buildDevinAcpSpawnInput(input.devinSettings, input.cwd, input.environment),
+      // No authMethodId: upstream's runtime takes a static string only,
+      // and resolveDevinAuthMethodId always returned undefined (Devin's
+      // one advertised method is never sent to `authenticate`).
+      authenticateOnAuthRequired: false,
+      // Devin resolves a cancelled `session/prompt` promptly and runs the
+      // next prompt normally — nothing queues behind the cancelled turn.
+      cancelBehavior: "interrupt",
+      // Devin edits files and runs commands through its own tools; it never
+      // calls back into the client for fs or terminal access.
+      clientCapabilities: input.clientCapabilities ?? {
+        fs: { readTextFile: false, writeTextFile: false },
+        terminal: false,
+      },
+    }).pipe(
+      Layer.provide(
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
       ),
-    );
-    return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
-      Effect.provide(acpContext),
-    );
-  });
+    ),
+  );
+  return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
+    Effect.provide(acpContext),
+  );
+});
 
 /**
  * T3's runtime modes map onto Devin's `mode` session config option:

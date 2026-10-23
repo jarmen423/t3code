@@ -113,36 +113,59 @@ export function makeForkAcpFlavor(
               : child.status,
         result: child.phase === "started" ? null : (child.summary ?? null),
       });
+      // Upstream's flavor hook surfaces ONE subagent update per call and has
+      // no settle hook: a delegate_task's projected children queue here and
+      // drain one per call for the same tool call (the tracker itself stays
+      // turn-agnostic — id freezing, sequence monotonicity, and settle-on-
+      // terminal live there; turn teardown is the adapter's job via
+      // subagentsIdleOnTurnCompletion above).
+      const pendingByToolCall = new Map<string, Array<ReturnType<typeof projectChild>>>();
+      const extractSubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractSubagentUpdate"]> = (
+        tool,
+      ) => {
+        const events = tracker.update(tool);
+        if (events.length > 0) {
+          const queue = pendingByToolCall.get(tool.toolCallId) ?? [];
+          queue.push(...events.map(projectChild));
+          pendingByToolCall.set(tool.toolCallId, queue);
+        }
+        const queue = pendingByToolCall.get(tool.toolCallId);
+        if (queue === undefined || queue.length === 0) return undefined;
+        const next = queue.shift()!;
+        if (queue.length === 0) pendingByToolCall.delete(tool.toolCallId);
+        return next;
+      };
       return {
         ...common,
         preferResumeSession: true,
         sessionModeForPolicy: (policy) => hermesPermissionMode(policy.runtimeMode),
-        extractSubagentUpdates: (tool, nativeTurnId) =>
-          tracker.update(tool, nativeTurnId).map(projectChild),
-        settleSubagents: (nativeTurnId) => tracker.settleTurn(nativeTurnId).map(projectChild),
-        applyModelSelection: ({ runtime, startResult, modelSelection }) =>
-          Effect.gen(function* () {
-            const requestedReasoningEffort = getModelSelectionStringOptionValue(
-              modelSelection,
-              "reasoningEffort",
-            );
-            const sessionId = startResult.sessionId;
-            const appliedModel = yield* applyHermesAcpModelSelection({
-              runtime,
-              currentModelId: currentHermesModelIdFromSessionSetup(startResult.sessionSetupResult),
-              currentReasoningEffort: reasoningEfforts.has(sessionId)
-                ? reasoningEfforts.get(sessionId)
-                : currentHermesReasoningEffortFromSessionSetup(startResult.sessionSetupResult),
-              requestedModelId: modelSelection.model,
-              requestedReasoningEffort,
-              mapError: (cause) => cause,
-            });
-            const effort = normalizeHermesReasoningEffort(requestedReasoningEffort);
-            if (effort !== undefined && appliedModel !== undefined) {
-              reasoningEfforts.set(sessionId, effort);
-            }
-            return appliedModel;
-          }),
+        extractSubagentUpdate,
+        applyModelSelection: Effect.fn("ForkAcpAdapterV2.applyHermesModelSelection")(function* ({
+          runtime,
+          startResult,
+          modelSelection,
+        }) {
+          const requestedReasoningEffort = getModelSelectionStringOptionValue(
+            modelSelection,
+            "reasoningEffort",
+          );
+          const sessionId = startResult.sessionId;
+          const appliedModel = yield* applyHermesAcpModelSelection({
+            runtime,
+            currentModelId: currentHermesModelIdFromSessionSetup(startResult.sessionSetupResult),
+            currentReasoningEffort: reasoningEfforts.has(sessionId)
+              ? reasoningEfforts.get(sessionId)
+              : currentHermesReasoningEffortFromSessionSetup(startResult.sessionSetupResult),
+            requestedModelId: modelSelection.model,
+            requestedReasoningEffort,
+            mapError: (cause) => cause,
+          });
+          const effort = normalizeHermesReasoningEffort(requestedReasoningEffort);
+          if (effort !== undefined && appliedModel !== undefined) {
+            reasoningEfforts.set(sessionId, effort);
+          }
+          return appliedModel;
+        }),
       };
     }
   }
@@ -157,52 +180,51 @@ export const makeForkAcpAdapterV2 = Effect.fn("makeForkAcpAdapterV2")(function* 
   const loggers = yield* ProviderEventLoggers;
   const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
   const driver = ProviderDriverKind.make(provider.driver);
-  const makeRuntime = (input: AcpAdapterV2RuntimeInput) =>
-    Effect.gen(function* () {
-      const common = {
-        ...input,
-        environment: { ...callbacks.environment, ...input.processEnvironment },
-        childProcessSpawner: spawner,
-      };
-      const runtime = yield* provider.driver === "hermes"
-        ? makeHermesAcpRuntime({ ...common, hermesSettings: provider.settings })
-        : makeDevinAcpRuntime({ ...common, devinSettings: provider.settings });
-      const onAuthError = (cause: AcpErrors.AcpError) =>
-        cause._tag === "AcpRequestError" && cause.code === -32000
-          ? callbacks.onAuthRequired
-          : Effect.void;
-      return {
-        ...runtime,
-        start: () =>
-          runtime
-            .start()
-            .pipe(Effect.tap(callbacks.onSessionStarted), Effect.tapError(onAuthError)),
-        prompt: (...args: Parameters<typeof runtime.prompt>) =>
-          runtime.prompt(...args).pipe(Effect.tapError(onAuthError)),
-        setMode: (modeId: string) =>
-          Effect.gen(function* () {
-            if (provider.driver === "hermes") {
-              const started = yield* runtime.start();
-              yield* applyHermesAcpMode({
-                runtime,
-                sessionId: started.sessionId,
-                modeId,
-                mapError: (cause) => cause,
-              });
-              return {};
-            }
-            return yield* runtime.setMode(modeId);
-          }),
-      };
-    });
-  const createSessionFlavor = () => ({
+  const makeRuntime = Effect.fn("ForkAcpAdapterV2.makeRuntime")(function* (
+    input: AcpAdapterV2RuntimeInput,
+  ) {
+    const common = {
+      ...input,
+      environment: { ...callbacks.environment, ...input.processEnvironment },
+      childProcessSpawner: spawner,
+    };
+    const runtime = yield* provider.driver === "hermes"
+      ? makeHermesAcpRuntime({ ...common, hermesSettings: provider.settings })
+      : makeDevinAcpRuntime({ ...common, devinSettings: provider.settings });
+    const onAuthError = (cause: AcpErrors.AcpError) =>
+      cause._tag === "AcpRequestError" && cause.code === -32000
+        ? callbacks.onAuthRequired
+        : Effect.void;
+    return {
+      ...runtime,
+      start: () =>
+        runtime.start().pipe(Effect.tap(callbacks.onSessionStarted), Effect.tapError(onAuthError)),
+      prompt: (...args: Parameters<typeof runtime.prompt>) =>
+        runtime.prompt(...args).pipe(Effect.tapError(onAuthError)),
+      setMode: Effect.fn("ForkAcpAdapterV2.setMode")(function* (modeId: string) {
+        if (provider.driver === "hermes") {
+          const started = yield* runtime.start();
+          yield* applyHermesAcpMode({
+            runtime,
+            sessionId: started.sessionId,
+            modeId,
+            mapError: (cause) => cause,
+          });
+          return {};
+        }
+        return yield* runtime.setMode(modeId);
+      }),
+    };
+  });
+  // Upstream's adapter takes one flavor per adapter instance (no per-session
+  // flavor factory); the flavor's per-session state is keyed by session/turn id.
+  const flavor = {
     ...makeForkAcpFlavor(provider, makeRuntime),
     onAvailableCommandsUpdate: callbacks.onAvailableCommands,
-  });
+  };
   return yield* makeAcpAdapterV2({
     instanceId: callbacks.instanceId,
-    flavor: createSessionFlavor(),
-    createSessionFlavor,
+    flavor,
     selfInvocation,
     ...(provider.driver === "devin"
       ? {

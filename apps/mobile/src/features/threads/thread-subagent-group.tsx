@@ -50,19 +50,13 @@ function SubagentElapsed({ agents }: { readonly agents: ReadonlyArray<AgentTimin
 function SubagentAvatar(props: {
   readonly item: SubagentItem;
   readonly iconUrl?: string | null | undefined;
-  readonly instanceIcon?: string | null | undefined;
 }) {
   return (
     <View
       accessible={false}
       className="h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-card"
     >
-      <ProviderIcon
-        provider={props.item.driver}
-        iconUrl={props.iconUrl}
-        instanceIcon={props.instanceIcon}
-        size={15}
-      />
+      <ProviderIcon provider={props.item.driver} iconUrl={props.iconUrl} size={15} />
     </View>
   );
 }
@@ -105,7 +99,7 @@ export function ThreadSubagentGroup(props: {
     const provider = config?.providers.find(
       (candidate) => candidate.instanceId === item.providerInstanceId,
     );
-    return { iconUrl: provider?.iconUrl, instanceIcon: provider?.instanceIcon };
+    return { iconUrl: provider?.iconUrl };
   };
   return (
     <WorkLogBlock>

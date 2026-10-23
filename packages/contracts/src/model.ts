@@ -118,6 +118,8 @@ const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
 const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
+const HERMES_DRIVER_KIND = ProviderDriverKind.make("hermes");
+const DEVIN_DRIVER_KIND = ProviderDriverKind.make("devin");
 const MUSE_DRIVER_KIND = ProviderDriverKind.make("muse");
 const PI_DRIVER_KIND = ProviderDriverKind.make("pi");
 const ACP_REGISTRY_DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
@@ -149,6 +151,12 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [CURSOR_DRIVER_KIND]: "auto",
   // Product slug, not an ACP model id. The Grok adapter treats it as "the session's current model".
   [GROK_DRIVER_KIND]: "grok-build",
+  // Product slug, not an ACP model id. The Hermes adapter treats it as "keep the
+  // model Hermes is configured with" and skips session/set_model for it.
+  [HERMES_DRIVER_KIND]: "default",
+  // Product slug, not an ACP model id. The Devin adapter treats it as "keep the
+  // model Devin is configured with" and skips the model config option for it.
+  [DEVIN_DRIVER_KIND]: "default",
   [MUSE_DRIVER_KIND]: MUSE_DEFAULT_MODEL,
   [ACP_REGISTRY_DRIVER_KIND]: "default",
   // "default" defers to the user's own Pi settings.json model selection.
@@ -162,6 +170,8 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
 > = {
   [CODEX_DRIVER_KIND]: DEFAULT_TEXT_GENERATION_MODEL,
   [ProviderDriverKind.make("antigravity")]: ANTIGRAVITY_DEFAULT_MODEL,
+  [HERMES_DRIVER_KIND]: "default",
+  [DEVIN_DRIVER_KIND]: "default",
   [CLAUDE_DRIVER_KIND]: "claude-haiku-5-5",
   [CURSOR_DRIVER_KIND]: "composer-2",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
@@ -199,6 +209,8 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [CLAUDE_DRIVER_KIND]: "Claude",
   [CURSOR_DRIVER_KIND]: "Cursor",
   [GROK_DRIVER_KIND]: "Grok",
+  [HERMES_DRIVER_KIND]: "Hermes",
+  [DEVIN_DRIVER_KIND]: "Devin",
   [MUSE_DRIVER_KIND]: "Muse Code",
   [ACP_REGISTRY_DRIVER_KIND]: "ACP Registry",
   [PI_DRIVER_KIND]: "Pi",

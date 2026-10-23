@@ -20,6 +20,8 @@ import { beginAcpMockPrompt } from "./acpMockCancellationState.ts";
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
+const hermesProfile = process.env.T3_ACP_HERMES === "1";
+const devinProfile = process.env.T3_ACP_DEVIN === "1";
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
@@ -51,6 +53,7 @@ const emitActiveToolThenHang = process.env.T3_ACP_EMIT_ACTIVE_TOOL_THEN_HANG ===
 const emitGrokMonitorPostTurnPoll = process.env.T3_ACP_EMIT_GROK_MONITOR_POST_TURN_POLL === "1";
 const emitGrokBackgroundTaskStarted = process.env.T3_ACP_EMIT_GROK_BACKGROUND_TASK_STARTED === "1";
 const emitGrokBackgroundTaskPoll = process.env.T3_ACP_GROK_BACKGROUND_TASK_COMPLETION === "poll";
+const emitHermesDelegateTask = process.env.T3_ACP_EMIT_HERMES_DELEGATE_TASK === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const waitForResumeRelease = process.env.T3_ACP_WAIT_FOR_RESUME_RELEASE === "1";
 const completeFirstPromptOnCancel = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL === "1";
@@ -73,6 +76,7 @@ const emitRunningCommandThenHangOnFirstPrompt =
 const emitEmptySuccessfulBash = process.env.T3_ACP_EMIT_EMPTY_SUCCESSFUL_BASH === "1";
 const emitEmptySuccessfulBashThenHang =
   process.env.T3_ACP_EMIT_EMPTY_SUCCESSFUL_BASH_THEN_HANG === "1";
+const emitStreamingCommandOutput = process.env.T3_ACP_EMIT_STREAMING_COMMAND_OUTPUT === "1";
 const exitOnCancel = process.env.T3_ACP_EXIT_ON_CANCEL === "1";
 const runningCommandIgnoresTerm = process.env.T3_ACP_RUNNING_COMMAND_IGNORE_TERM === "1";
 const runningCommandPidPath = process.env.T3_ACP_RUNNING_COMMAND_PID_PATH;
@@ -128,8 +132,15 @@ const permissionRequestCount = Math.max(
 );
 const sessionId = "mock-session-1";
 
-let currentModeId = antigravityProfile ? "default" : "ask";
-let currentModelId = antigravityProfile ? "gemini-test-low" : "default";
+let currentModeId =
+  antigravityProfile || hermesProfile ? "default" : devinProfile ? "accept-edits" : "ask";
+let currentModelId = antigravityProfile
+  ? "gemini-test-low"
+  : hermesProfile
+    ? "openrouter:mock-alpha"
+    : devinProfile
+      ? "swe-1.5"
+      : "default";
 let parameterizedModelPicker = false;
 let currentReasoning = "medium";
 let currentContext = "272k";
@@ -203,6 +214,46 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
         type: "select",
         currentValue: currentModeId,
         options: availableModes.map((mode) => ({ value: mode.id, name: mode.name })),
+      },
+    ];
+  }
+  if (devinProfile) {
+    // Mirrors the real Devin ACP: mode + model select configOptions; model ids
+    // embed effort suffixes and fusion-* combos, no separate `models` field.
+    return [
+      {
+        configId: "mode",
+        name: "Mode",
+        category: "mode",
+        type: "select",
+        currentValue: currentModeId,
+        options: availableModes.map((mode) => ({ value: mode.id, name: mode.name })),
+      },
+      {
+        configId: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: currentModelId,
+        options: [
+          { value: "swe-1.5", name: "SWE 1.5" },
+          { value: "swe-1.5-high", name: "SWE 1.5 (High)" },
+          { value: "claude-sonnet-4-6-high", name: "Claude Sonnet 4.6 (High)" },
+          { value: "gpt-5.4-high", name: "GPT-5.4 (High)" },
+          { value: "fusion-sonnet", name: "Fusion Sonnet" },
+        ],
+      },
+    ];
+  }
+  if (hermesProfile) {
+    return [
+      {
+        configId: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: currentModelId,
+        options: hermesModels.map((model) => ({ value: model.modelId, name: model.name })),
       },
     ];
   }
@@ -398,29 +449,50 @@ const antigravityModels = [
   { modelId: "gemini-test-high", name: "Gemini Test High" },
 ] satisfies ReadonlyArray<AcpCompat.ModelInfo>;
 
+// Mirrors the real Hermes ACP: provider-qualified model ids, Hermes' fixed
+// mode set, and `session/set_mode` as the only working mode switch.
+const hermesModels = [
+  { modelId: "openrouter:mock-alpha", name: "Mock Alpha" },
+  { modelId: "xai-oauth:mock-beta", name: "Mock Beta" },
+] satisfies ReadonlyArray<AcpCompat.ModelInfo>;
+
 const availableModes: ReadonlyArray<AcpCompat.SessionMode> = antigravityProfile
   ? [
       { id: "default", name: "Default" },
       { id: "auto_edit", name: "Auto edit" },
       { id: "yolo", name: "YOLO" },
     ]
-  : [
-      {
-        id: "ask",
-        name: "Ask",
-        description: "Request permission before making any changes",
-      },
-      {
-        id: "architect",
-        name: "Architect",
-        description: "Design and plan software systems without implementation",
-      },
-      {
-        id: "code",
-        name: "Code",
-        description: "Write and modify code with full tool access",
-      },
-    ];
+  : hermesProfile
+    ? [
+        { id: "default", name: "Default" },
+        { id: "accept_edits", name: "Accept edits" },
+        { id: "dont_ask", name: "Don't ask" },
+      ]
+    : devinProfile
+      ? [
+          { id: "accept-edits", name: "Code" },
+          { id: "smart", name: "Smart" },
+          { id: "ask", name: "Ask" },
+          { id: "plan", name: "Plan" },
+          { id: "bypass", name: "Bypass" },
+        ]
+      : [
+          {
+            id: "ask",
+            name: "Ask",
+            description: "Request permission before making any changes",
+          },
+          {
+            id: "architect",
+            name: "Architect",
+            description: "Design and plan software systems without implementation",
+          },
+          {
+            id: "code",
+            name: "Code",
+            description: "Write and modify code with full tool access",
+          },
+        ];
 
 function modeState(): AcpCompat.SessionModeState {
   return {
@@ -450,9 +522,20 @@ const grokAcpModels: ReadonlyArray<AcpCompat.ModelInfo> = [
   { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
 ];
 
-function modelState(): AcpCompat.SessionModelState {
+function modelState(): AcpCompat.SessionModelState | null {
   if (antigravityProfile) {
     return { currentModelId, availableModels: antigravityModels };
+  }
+  // Devin advertises models through configOptions only, matching the real
+  // agent — session/new carries no `models` field for it.
+  if (devinProfile) {
+    return null;
+  }
+  if (hermesProfile) {
+    const modelId = hermesModels.some((model) => model.modelId === currentModelId)
+      ? currentModelId
+      : "openrouter:mock-alpha";
+    return { currentModelId: modelId, availableModels: hermesModels };
   }
   const modelId = grokAcpModels.some((model) => model.modelId === currentModelId)
     ? currentModelId
@@ -533,17 +616,34 @@ const program = Effect.gen(function* () {
   const resumeRelease = yield* Deferred.make<void>();
   const nativeCancelRequested = yield* Deferred.make<void>();
   const nativeCancelRelease = yield* Deferred.make<void>();
-  const publishAntigravityCommands = (targetSessionId: string) =>
-    agent.client.sessionUpdate({
-      sessionId: targetSessionId,
-      update: {
-        sessionUpdate: "available_commands_update",
-        availableCommands: [
-          { name: "plan", description: "Plan a task", input: { hint: "task" } },
+  const publishAdvertisedCommands = (targetSessionId: string) => {
+    const availableCommands = antigravityProfile
+      ? [
+          {
+            name: "plan",
+            description: "Plan a task",
+            input: { type: "text" as const, hint: "task" },
+          },
           { name: "logout", description: "Sign out" },
-        ],
-      },
+        ]
+      : devinProfile
+        ? [
+            { name: "code", description: "Code mode" },
+            { name: "smart", description: "Smart mode" },
+            { name: "ask", description: "Ask mode" },
+            { name: "plan", description: "Plan mode" },
+            { name: "bypass", description: "Bypass approvals" },
+            { name: "compact", description: "Compact the session" },
+          ]
+        : [];
+    if (availableCommands.length === 0) {
+      return Effect.void;
+    }
+    return agent.client.sessionUpdate({
+      sessionId: targetSessionId,
+      update: { sessionUpdate: "available_commands_update", availableCommands },
     });
+  };
 
   const finishPrompt = (
     targetSessionId: string,
@@ -573,6 +673,45 @@ const program = Effect.gen(function* () {
         );
       }
       parameterizedModelPicker = request.capabilities?._meta?.parameterizedModelPicker === true;
+      if (hermesProfile) {
+        // Mirrors the real agent: a provider method appears only when Hermes
+        // resolves credentials; `hermes-setup` is always present and is a
+        // terminal flow T3 can never call through `authenticate`.
+        const authMethods: Array<AcpCompat.AuthMethod> = [
+          { type: "terminal", id: "hermes-setup", name: "Run hermes setup" },
+        ];
+        if (process.env.T3_ACP_HERMES_UNCONFIGURED !== "1") {
+          authMethods.unshift({ id: "openrouter", name: "OpenRouter" });
+        }
+        const response: AcpSchema.InitializeResponse = {
+          protocolVersion: 2,
+          info: { name: "hermes", version: "0.21.1-mock" },
+          capabilities: {},
+          authMethods: authMethods.map(({ id, ...method }) => ({
+            ...method,
+            type: method.type ?? "agent",
+            methodId: id,
+          })),
+          _meta: { modelState: modelState() },
+        };
+        return response;
+      }
+      if (devinProfile) {
+        // Mirrors the real `devin acp` initialize payload.
+        const response: AcpSchema.InitializeResponse = {
+          protocolVersion: 2,
+          info: { name: "affogato", title: "Devin Agent", version: "0.0.0-dev" },
+          capabilities: {},
+          authMethods: [{ type: "agent", methodId: "devin-browser", name: "Log in with browser" }],
+          _meta: {
+            "cognition.ai/sessionRename": true,
+            "cognition.ai/userEdits": true,
+            "cognition.ai/terminalLifecycle": true,
+            "cognition.ai/megaplan": true,
+          },
+        };
+        return response;
+      }
       return {
         protocolVersion: 2,
         info: { name: "t3-acp-mock-agent", version: "0.0.0" },
@@ -604,6 +743,16 @@ const program = Effect.gen(function* () {
   // GEMINI_API_KEY from the process environment and rejects when it is missing.
   yield* agent.handleAuthenticate((request) =>
     Effect.gen(function* () {
+      if (devinProfile && request.methodId !== "devin-browser") {
+        return yield* AcpError.AcpRequestError.invalidParams(
+          `Mock Devin rejected auth method ${request.methodId}.`,
+        );
+      }
+      if (hermesProfile && request.methodId === "hermes-setup") {
+        return yield* AcpError.AcpRequestError.invalidParams(
+          "hermes-setup is a terminal flow; it cannot be completed over ACP.",
+        );
+      }
       if (antigravityProfile) {
         if (
           request.methodId !== "oauth-personal" &&
@@ -642,9 +791,7 @@ const program = Effect.gen(function* () {
   yield* agent.handleCreateSession(() =>
     Effect.gen(function* () {
       yield* requireAuthentication();
-      if (antigravityProfile) {
-        yield* publishAntigravityCommands(sessionId);
-      }
+      yield* publishAdvertisedCommands(sessionId);
       if (commandAdvertisementDelayMs >= 0) {
         yield* Effect.sleep(`${commandAdvertisementDelayMs} millis`).pipe(
           Effect.andThen(
@@ -690,9 +837,7 @@ const program = Effect.gen(function* () {
       if (waitForResumeRelease) {
         yield* Deferred.await(resumeRelease);
       }
-      if (antigravityProfile) {
-        yield* publishAntigravityCommands(request.sessionId);
-      }
+      yield* publishAdvertisedCommands(request.sessionId);
       return {
         modes: modeState(),
         models: modelState(),
@@ -881,7 +1026,10 @@ const program = Effect.gen(function* () {
       if (request.configId === "agent" && typeof request.value === "string") {
         currentAgent = request.value;
       }
-      if (request.configId === "reasoning" && typeof request.value === "string") {
+      if (
+        (request.configId === "reasoning" || request.configId === "reasoning_effort") &&
+        typeof request.value === "string"
+      ) {
         currentReasoning = request.value;
       }
       if (request.configId === "context" && typeof request.value === "string") {
@@ -1634,6 +1782,38 @@ const program = Effect.gen(function* () {
         return yield* finishPrompt(requestedSessionId, "end_turn");
       }
 
+      // A burst of cumulative command output, like Devin streaming a long ssh command.
+      if (emitStreamingCommandOutput) {
+        const toolCallId = "tool-call-streaming-output-1";
+        let output = "";
+        for (let line = 1; line <= 20; line += 1) {
+          output += `line ${line}\n`;
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId,
+              title: "Terminal",
+              kind: "execute",
+              status: "in_progress",
+              rawInput: { command: "stream" },
+              rawOutput: output,
+            },
+          });
+        }
+        yield* Effect.sleep("1200 millis");
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId,
+            status: "completed",
+            rawOutput: output,
+          },
+        });
+        return yield* finishPrompt(requestedSessionId, "end_turn");
+      }
+
       if (emitXAiPromptCompleteThenHang) {
         writeJsonRpcNotification("session/update", {
           sessionId: requestedSessionId,
@@ -1760,6 +1940,111 @@ const program = Effect.gen(function* () {
           },
         });
         return yield* Effect.never;
+      }
+
+      if (emitHermesDelegateTask) {
+        // Mirrors Hermes' real delegate_task shape: one tool call whose
+        // rawInput carries the task list, a background dispatch notice, and
+        // per-child taskProgress frames inside later tool_call_update
+        // rawOutputs (rawInput omitted on those deltas).
+        const delegateCallId = "delegate-tool-1";
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: delegateCallId,
+            title: "delegate_task",
+            kind: "other",
+            status: "pending",
+            rawInput: {
+              toolName: "delegate_task",
+              tasks: [
+                { goal: "Review cancellation", role: "reviewer" },
+                { goal: "Check retry behavior", model: "openai/gpt-5" },
+              ],
+            },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: delegateCallId,
+            status: "in_progress",
+            rawOutput: {
+              toolName: "delegate_task",
+              lifecycle: { status: "dispatched", mode: "background" },
+            },
+          },
+        });
+        const progressFrames: Array<{
+          readonly sequence: number;
+          readonly taskIndex: number;
+          readonly type: string;
+          readonly status?: string;
+          readonly lastToolName?: string;
+          readonly summary: string;
+        }> = [
+          {
+            sequence: 1,
+            taskIndex: 1,
+            type: "tool.started",
+            status: "running",
+            lastToolName: "search_files",
+            summary: "Running search_files",
+          },
+          {
+            sequence: 2,
+            taskIndex: 1,
+            type: "thinking",
+            status: "running",
+            summary: "Thinking",
+          },
+          {
+            sequence: 3,
+            taskIndex: 1,
+            type: "completed",
+            status: "completed",
+            summary: "Retry behavior is correct",
+          },
+        ];
+        for (const frame of progressFrames) {
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: delegateCallId,
+              status: "in_progress",
+              rawOutput: { toolName: "delegate_task", taskProgress: frame },
+            },
+          });
+        }
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: delegateCallId,
+            status: "completed",
+            rawOutput: {
+              toolName: "delegate_task",
+              taskProgress: {
+                sequence: 4,
+                taskIndex: 0,
+                type: "completed",
+                status: "completed",
+                summary: "Cancellation review is correct",
+              },
+            },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Delegation finished." },
+          },
+        });
+        return yield* finishPrompt(requestedSessionId, "end_turn");
       }
 
       if (emitGrokBackgroundTaskStarted || emitGrokBackgroundTaskPoll) {
@@ -2527,7 +2812,9 @@ const program = Effect.gen(function* () {
       });
     }
 
-    if (method !== "session/mode/set") {
+    // Hermes uses the stable ACP name; the older agents the mock emulates
+    // answer `session/mode/set`. Both carry {sessionId, modeId}.
+    if (method !== "session/mode/set" && method !== "session/set_mode") {
       return Effect.fail(AcpError.AcpRequestError.methodNotFound(method));
     }
 

@@ -83,6 +83,15 @@ export function ProviderIcon(props: ProviderIconProps) {
       />
     );
   }
+  if (props.provider?.trim().toLowerCase() === "hermes") {
+    return (
+      <Image
+        source={require("../../assets/hermes.png")}
+        style={{ width: size, height: size }}
+        contentFit="contain"
+      />
+    );
+  }
   if (props.provider === "acpRegistry") {
     return <AcpRegistryProviderIcon color={mono} iconUrl={props.iconUrl} size={size} />;
   }

@@ -1,10 +1,8 @@
 import { ProviderDriverKind, type RuntimeMode } from "@t3tools/contracts";
 import type { HermesSettings } from "@t3tools/provider-hermes/settings";
 import { normalizeModelSlug } from "@t3tools/shared/model";
-import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -30,7 +28,7 @@ type HermesAcpRuntimeHermesSettings = Pick<HermesSettings, "binaryPath">;
 
 export interface HermesAcpRuntimeInput extends Omit<
   AcpSessionRuntime.AcpSessionRuntimeOptions,
-  "authMethodId" | "cancelBehavior" | "spawn"
+  "authMethodId" | "authenticateEagerly" | "cancelBehavior" | "spawn"
 > {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly hermesSettings: HermesAcpRuntimeHermesSettings | null | undefined;
@@ -71,38 +69,75 @@ export function hermesSetupRequired(initialize: EffectAcpSchema.InitializeRespon
   return resolveHermesAuthMethodId(initialize) === undefined;
 }
 
-export const makeHermesAcpRuntime = (
+export const makeHermesAcpRuntime = Effect.fn("HermesAcpSupport.makeRuntime")(function* (
   input: HermesAcpRuntimeInput,
-): Effect.Effect<
-  AcpSessionRuntime.AcpSessionRuntime["Service"],
-  EffectAcpErrors.AcpError,
-  Crypto.Crypto | Scope.Scope
-> =>
-  Effect.gen(function* () {
-    const acpContext = yield* Layer.build(
-      AcpSessionRuntime.layer({
-        ...input,
-        spawn: buildHermesAcpSpawnInput(input.hermesSettings, input.cwd, input.environment),
-        authMethodId: resolveHermesAuthMethodId,
-        authenticateEagerly: true,
-        // Hermes does not drain queued prompts on cancel — they run after the
-        // interrupted turn finishes. Waiting for the prompt response keeps a
-        // steered replacement from ever landing in that queue.
-        cancelBehavior: "wait-for-prompt",
-        clientCapabilities: input.clientCapabilities ?? {
-          fs: { readTextFile: false, writeTextFile: false },
-          terminal: false,
-        },
-      }).pipe(
-        Layer.provide(
-          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
-        ),
+) {
+  const acpContext = yield* Layer.build(
+    AcpSessionRuntime.layer({
+      ...input,
+      spawn: buildHermesAcpSpawnInput(input.hermesSettings, input.cwd, input.environment),
+      // Upstream's runtime no longer accepts a resolver callback for
+      // authMethodId: on an auth-required error it selects the first
+      // agent-managed method itself, which is exactly
+      // resolveHermesAuthMethodId's rule. The eager authenticate Hermes
+      // expects is restored in the start wrapper below.
+      // Hermes does not drain queued prompts on cancel — they run after the
+      // interrupted turn finishes. Waiting for the prompt response keeps a
+      // steered replacement from ever landing in that queue.
+      cancelBehavior: "wait-for-prompt",
+      clientCapabilities: input.clientCapabilities ?? {
+        fs: { readTextFile: false, writeTextFile: false },
+        terminal: false,
+      },
+    }).pipe(
+      Layer.provide(
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
       ),
-    );
-    return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
-      Effect.provide(acpContext),
-    );
-  });
+    ),
+  );
+  const runtime = yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
+    Effect.provide(acpContext),
+  );
+  // Hermes expects `authenticate` once it advertises an agent-managed
+  // method (the fork's runtime sent it eagerly, before session setup).
+  // Upstream's runtime only authenticates after an auth-required error, so
+  // send it here instead: the session already exists when start() resolves,
+  // and this still lands before any prompt. When no agent method is
+  // advertised there is nothing to send — the prompt's auth-required error
+  // surfaces the Hermes setup requirement.
+  let authenticated = false;
+  const authenticate = (methodId: string) =>
+    // The wire name is generation-negotiated inside the ACP client
+    // (`auth/login` for generation 2, `authenticate` for generation 1);
+    // the raw request used here has to pick one, so fall back on
+    // method-not-found.
+    runtime
+      .request("auth/login", { methodId })
+      .pipe(
+        Effect.catch((error) =>
+          error._tag === "AcpRequestError" && error.code === -32601
+            ? runtime.request("authenticate", { methodId })
+            : Effect.fail(error),
+        ),
+      );
+  return {
+    ...runtime,
+    start: () =>
+      runtime.start().pipe(
+        Effect.tap((result) => {
+          const methodId = resolveHermesAuthMethodId(result.initializeResult);
+          if (authenticated || methodId === undefined) return Effect.void;
+          return authenticate(methodId).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                authenticated = true;
+              }),
+            ),
+          );
+        }),
+      ),
+  };
+});
 
 /** Hermes' advertised modes are a fixed set: `default`, `accept_edits`, `dont_ask`. */
 export function hermesPermissionMode(runtimeMode: RuntimeMode): string {
@@ -121,7 +156,7 @@ export function hermesPermissionMode(runtimeMode: RuntimeMode): string {
  * Sends `session/set_mode` directly: `runtime.setMode` goes through
  * `session/set_config_option`, which Hermes accepts but ignores for "mode".
  */
-export function applyHermesAcpMode<E>(input: {
+export const applyHermesAcpMode = Effect.fn("HermesAcpSupport.applyMode")(function* <E>(input: {
   readonly runtime: Pick<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     "request" | "getModeState"
@@ -129,24 +164,22 @@ export function applyHermesAcpMode<E>(input: {
   readonly sessionId: string;
   readonly modeId: string;
   readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
-}): Effect.Effect<void, E> {
-  return Effect.gen(function* () {
-    const modeState = yield* input.runtime.getModeState;
-    if (modeState?.currentModeId === input.modeId) return;
-    if (
-      modeState !== undefined &&
-      !modeState.availableModes.some((mode) => mode.id === input.modeId)
-    ) {
-      return;
-    }
-    yield* input.runtime
-      .request("session/set_mode", {
-        sessionId: input.sessionId,
-        modeId: input.modeId,
-      })
-      .pipe(Effect.mapError(input.mapError));
-  });
-}
+}) {
+  const modeState = yield* input.runtime.getModeState;
+  if (modeState?.currentModeId === input.modeId) return;
+  if (
+    modeState !== undefined &&
+    !modeState.availableModes.some((mode) => mode.id === input.modeId)
+  ) {
+    return;
+  }
+  yield* input.runtime
+    .request("session/set_mode", {
+      sessionId: input.sessionId,
+      modeId: input.modeId,
+    })
+    .pipe(Effect.mapError(input.mapError));
+});
 
 export function resolveHermesAcpBaseModelId(model: string | null | undefined): string {
   const trimmed = model?.trim();

@@ -38,7 +38,6 @@ export function ThreadCommandSubtitle(props: {
   isCurrent: boolean;
   driverKind?: ProviderDriverKind | null;
   providerDisplayName?: string | null;
-  instanceIcon?: string | undefined;
   acpRegistryAgentId?: string | undefined;
   acpRegistryIconUrl?: string | undefined;
   variant?: ThreadCommandSubtitleVariant;
@@ -94,7 +93,6 @@ export function ThreadCommandSubtitle(props: {
           <ProviderInstanceIcon
             driverKind={props.driverKind}
             displayName={props.providerDisplayName ?? props.driverKind}
-            instanceIcon={props.instanceIcon}
             acpRegistryAgentId={props.acpRegistryAgentId}
             acpRegistryIconUrl={props.acpRegistryIconUrl}
             iconClassName="size-3 shrink-0 opacity-70"

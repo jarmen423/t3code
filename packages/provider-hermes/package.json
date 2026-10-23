@@ -14,7 +14,7 @@
   },
   "scripts": {
     "test": "vp test run --config ../../vite.config.ts --dir .",
-    "typecheck": "tsc-rs --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@t3tools/contracts": "workspace:*",
