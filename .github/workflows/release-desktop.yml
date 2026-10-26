@@ -263,7 +263,17 @@ jobs:
           # The executable bundles the server again, so it needs the same stamp
           # as release.yml's JS bundle.
           T3CODE_TELEMETRY_CHANNEL: ${{ github.repository == 'pingdotgg/t3code' && inputs.release_channel || 'dev' }}
-        run: node apps/server/scripts/cli.ts build-exe --verbose ${{ inputs.platform == 'win' && format('--target win-{0}', inputs.arch) || '' }}
+        run: |
+          # vp pack extracts the downloaded target Node .zip by spawning a
+          # bare `tar` from PATH. Under the Git Bash shell this step uses,
+          # that is GNU tar, which reads the C:\ archive path as a remote
+          # host ("Cannot connect to C") and cannot read zip anyway. Put
+          # Windows' own bsdtar (System32\tar.exe) first on PATH — the same
+          # reason scripts/lib/windows-tar.ts names it by path.
+          if [[ "${{ inputs.platform }}" == "win" ]]; then
+            export PATH="/c/Windows/System32:$PATH"
+          fi
+          node apps/server/scripts/cli.ts build-exe --verbose ${{ inputs.platform == 'win' && format('--target win-{0}', inputs.arch) || '' }}
 
       - name: Import macOS signing certificate for the CLI archive
         if: inputs.cli_archive && inputs.platform == 'mac'
