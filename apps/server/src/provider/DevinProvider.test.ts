@@ -102,6 +102,7 @@ const testLayer = ProviderHostLive.layer.pipe(
   Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
   Layer.provideMerge(NodeCrypto.layer),
+  Layer.provideMerge(NodeServices.layer),
   Layer.provide(
     ServerConfig.layerTest(process.cwd(), { prefix: "t3-devin-provider-test-" }).pipe(
       Layer.provide(NodeServices.layer),

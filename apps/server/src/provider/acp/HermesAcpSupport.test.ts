@@ -167,7 +167,7 @@ describe("applyHermesAcpMode", () => {
       const failure = EffectAcpErrors.AcpRequestError.invalidParams("bad mode");
       const requests: Array<unknown> = [];
       const runtime = {
-        getModeState: Effect.succeed(undefined),
+        getModeState: Effect.sync(() => undefined),
         request: () => failure,
       };
       const error = yield* Effect.flip(

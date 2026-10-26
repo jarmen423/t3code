@@ -111,15 +111,12 @@ export const makeHermesAcpRuntime = Effect.fn("HermesAcpSupport.makeRuntime")(fu
     // (`auth/login` for generation 2, `authenticate` for generation 1);
     // the raw request used here has to pick one, so fall back on
     // method-not-found.
-    runtime
-      .request("auth/login", { methodId })
-      .pipe(
-        Effect.catch((error) =>
-          error._tag === "AcpRequestError" && error.code === -32601
-            ? runtime.request("authenticate", { methodId })
-            : Effect.fail(error),
-        ),
-      );
+    runtime.request("auth/login", { methodId }).pipe(
+      Effect.catchIf(
+        (error) => error._tag === "AcpRequestError" && error.code === -32601,
+        () => runtime.request("authenticate", { methodId }),
+      ),
+    );
   return {
     ...runtime,
     start: () =>
