@@ -969,11 +969,14 @@ type ProjectedToolStatus = ReturnType<typeof toolStatus> | "interrupted";
 
 // Agents such as Devin stream command output as many tool_call_updates per
 // second. Each projection persists two events and fans out to every client, so
-// a running tool persists at most once per interval; status changes land at once.
+// a running tool persists at most once per interval; status, title, and kind
+// changes land at once — only output churn is throttled.
 export const ACP_TOOL_PROJECTION_INTERVAL_MS = 500;
 
 interface AcpToolProjection {
   status: ProjectedToolStatus;
+  title: string | null;
+  kind: string | null;
   projectedAt: number;
   /** A newer state is waiting for the trailing flush. */
   deferred: boolean;
@@ -3587,6 +3590,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (
             projection !== undefined &&
             projection.status === status &&
+            projection.title === (toolCall.title ?? null) &&
+            projection.kind === (toolCall.kind ?? null) &&
             (status === "pending" || status === "running") &&
             nowMs - projection.projectedAt < ACP_TOOL_PROJECTION_INTERVAL_MS
           ) {
@@ -3626,6 +3631,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const now = yield* DateTime.now;
           context.toolProjections.set(toolCall.toolCallId, {
             status,
+            title: toolCall.title ?? null,
+            kind: toolCall.kind ?? null,
             projectedAt: DateTime.toEpochMillis(now),
             deferred: false,
           });
