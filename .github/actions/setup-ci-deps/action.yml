@@ -44,7 +44,14 @@ runs:
       if: steps.vp_cache.outputs.cache-hit == 'true'
       shell: bash
       run: |
-        echo "$HOME/.vite-plus/bin" >> "$GITHUB_PATH"
+        # GITHUB_PATH entries reach later steps verbatim, including Node
+        # processes that spawn `vp` (build-cli-archive.ts), and Windows
+        # process creation cannot resolve Git Bash's /c/... spelling.
+        bin_dir="$HOME/.vite-plus/bin"
+        if [[ "${{ runner.os }}" == "Windows" ]]; then
+          bin_dir="$(cygpath -w "$bin_dir")"
+        fi
+        echo "$bin_dir" >> "$GITHUB_PATH"
         "$HOME/.vite-plus/bin/vp" env use "${{ steps.vp.outputs.node }}"
 
     # vp gives each Node.js download attempt 10 minutes by default, so one
