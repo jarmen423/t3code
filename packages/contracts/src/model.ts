@@ -118,6 +118,7 @@ const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const HERMES_DRIVER_KIND = ProviderDriverKind.make("hermes");
 const DEVIN_DRIVER_KIND = ProviderDriverKind.make("devin");
+const FX_DRIVER_KIND = ProviderDriverKind.make("fx");
 const MUSE_DRIVER_KIND = ProviderDriverKind.make("muse");
 const PI_DRIVER_KIND = ProviderDriverKind.make("pi");
 const ACP_REGISTRY_DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
@@ -141,7 +142,7 @@ export const MUSE_DEFAULT_MODEL = "default";
 
 export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
   [CODEX_DRIVER_KIND]: DEFAULT_MODEL,
-  [CLAUDE_DRIVER_KIND]: "claude-fable-5-1",
+  [CLAUDE_DRIVER_KIND]: "claude-opus-5-5",
   [CURSOR_DRIVER_KIND]: "auto",
   // Product slug meaning the current session model, never an ACP model id.
   [GROK_DRIVER_KIND]: "grok-build",
@@ -151,6 +152,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   // Product slug, not an ACP model id. The Devin adapter treats it as "keep the
   // model Devin is configured with" and skips the model config option for it.
   [DEVIN_DRIVER_KIND]: "default",
+  [FX_DRIVER_KIND]: "default",
   [MUSE_DRIVER_KIND]: MUSE_DEFAULT_MODEL,
   [ACP_REGISTRY_DRIVER_KIND]: "default",
   // "default" defers to the user's own Pi settings.json model selection.
@@ -205,6 +207,7 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [GROK_DRIVER_KIND]: "Grok",
   [HERMES_DRIVER_KIND]: "Hermes",
   [DEVIN_DRIVER_KIND]: "Devin",
+  [FX_DRIVER_KIND]: "fx",
   [MUSE_DRIVER_KIND]: "Muse Code",
   [ACP_REGISTRY_DRIVER_KIND]: "ACP Registry",
   [PI_DRIVER_KIND]: "Pi",

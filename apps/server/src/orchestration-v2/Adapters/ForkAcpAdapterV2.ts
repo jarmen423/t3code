@@ -137,7 +137,6 @@ export function makeForkAcpFlavor(
       };
       return {
         ...common,
-        preferResumeSession: true,
         sessionModeForPolicy: (policy) => hermesPermissionMode(policy.runtimeMode),
         extractSubagentUpdate,
         applyModelSelection: Effect.fn("ForkAcpAdapterV2.applyHermesModelSelection")(function* ({
