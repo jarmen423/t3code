@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { SecretReference } from "./secretReference.ts";
 
 const PROVIDER_SLUG_MAX_CHARS = 64;
 const PROVIDER_SLUG_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
@@ -28,12 +29,38 @@ export const ProviderInstanceEnvironmentVariableName = TrimmedNonEmptyString.che
 export type ProviderInstanceEnvironmentVariableName =
   typeof ProviderInstanceEnvironmentVariableName.Type;
 
-export const ProviderInstanceEnvironmentVariable = Schema.Struct({
+const ProviderInstanceEnvironmentVariableValue = Schema.Struct({
+  name: ProviderInstanceEnvironmentVariableName,
+  value: Schema.Union([Schema.String, SecretReference]),
+  sensitive: Schema.Boolean,
+  valueRedacted: Schema.optionalKey(Schema.Boolean),
+});
+
+// A reference is encoded beside an empty value so older servers and clients still decode it.
+const StoredProviderInstanceEnvironmentVariable = Schema.Struct({
   name: ProviderInstanceEnvironmentVariableName,
   value: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   sensitive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   valueRedacted: Schema.optionalKey(Schema.Boolean),
+  secret: Schema.optionalKey(SecretReference),
 });
+
+export const ProviderInstanceEnvironmentVariable = StoredProviderInstanceEnvironmentVariable.pipe(
+  Schema.decodeTo(
+    Schema.toType(ProviderInstanceEnvironmentVariableValue),
+    SchemaTransformation.transform<
+      typeof ProviderInstanceEnvironmentVariableValue.Type,
+      typeof StoredProviderInstanceEnvironmentVariable.Type
+    >({
+      decode: ({ secret, ...variable }) =>
+        secret === undefined ? variable : { ...variable, value: secret },
+      encode: ({ value, ...variable }) =>
+        typeof value === "string"
+          ? { ...variable, value }
+          : { ...variable, value: "", secret: value },
+    }),
+  ),
+);
 export type ProviderInstanceEnvironmentVariable = typeof ProviderInstanceEnvironmentVariable.Type;
 
 export const ProviderInstanceEnvironment = Schema.Array(ProviderInstanceEnvironmentVariable);
@@ -46,7 +73,6 @@ export const PROVIDER_INSTANCE_ICON_MAX_DECODED_BYTES = 32 * 1024;
 
 const PROVIDER_INSTANCE_DATA_ICON_PATTERN =
   /^data:image\/(?:png|svg\+xml);base64,((?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?)$/;
-
 /**
  * Accept a user-configured instance icon, or return null.
  *
@@ -60,7 +86,6 @@ export function resolveProviderInstanceIcon(icon: string | null | undefined): st
   if (icon === null || icon === undefined) return null;
   const value = icon.trim();
   if (value.length === 0 || value.length > PROVIDER_INSTANCE_ICON_MAX_CHARS) return null;
-
   const dataIcon = PROVIDER_INSTANCE_DATA_ICON_PATTERN.exec(value);
   if (dataIcon) {
     const payload = dataIcon[1] ?? "";
@@ -70,7 +95,6 @@ export function resolveProviderInstanceIcon(icon: string | null | undefined): st
     if (decodedBytes <= 0 || decodedBytes > PROVIDER_INSTANCE_ICON_MAX_DECODED_BYTES) return null;
     return value;
   }
-
   try {
     const url = new URL(value);
     if (
@@ -85,20 +109,15 @@ export function resolveProviderInstanceIcon(icon: string | null | undefined): st
     return url.href;
   } catch {
     return null;
-  }
 }
-
 const isProviderInstanceIcon = Schema.makeFilter(
   (value: string) =>
     resolveProviderInstanceIcon(value) !== null ||
     "an https URL or a base64 PNG or SVG data URI within the size cap",
 );
-
-/**
  * Canonical instance icon. Decoding trims, rejects other schemes, and
  * normalizes https URLs. An absent key stays absent so older settings files
  * keep decoding.
- */
 export const ProviderInstanceIcon = TrimmedNonEmptyString.check(
   Schema.isMaxLength(PROVIDER_INSTANCE_ICON_MAX_CHARS),
   isProviderInstanceIcon,
@@ -110,9 +129,11 @@ export const ProviderInstanceIcon = TrimmedNonEmptyString.check(
       encode: (value) => resolveProviderInstanceIcon(value) ?? value,
     }),
   ),
-);
 export type ProviderInstanceIcon = typeof ProviderInstanceIcon.Type;
-
+/** What drivers receive: every secret reference has been read into a plain value. */
+export type ResolvedProviderInstanceEnvironment = ReadonlyArray<
+  Omit<ProviderInstanceEnvironmentVariable, "value"> & { readonly value: string }
+>;
 /** Drivers decode their own config; unknown-driver envelopes round-trip verbatim across versions. */
 export const ProviderInstanceConfig = Schema.Struct({
   driver: ProviderDriverKind,
