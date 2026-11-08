@@ -109,15 +109,18 @@ export function resolveProviderInstanceIcon(icon: string | null | undefined): st
     return url.href;
   } catch {
     return null;
+  }
 }
 const isProviderInstanceIcon = Schema.makeFilter(
   (value: string) =>
     resolveProviderInstanceIcon(value) !== null ||
     "an https URL or a base64 PNG or SVG data URI within the size cap",
 );
+/**
  * Canonical instance icon. Decoding trims, rejects other schemes, and
  * normalizes https URLs. An absent key stays absent so older settings files
  * keep decoding.
+ */
 export const ProviderInstanceIcon = TrimmedNonEmptyString.check(
   Schema.isMaxLength(PROVIDER_INSTANCE_ICON_MAX_CHARS),
   isProviderInstanceIcon,
@@ -129,6 +132,7 @@ export const ProviderInstanceIcon = TrimmedNonEmptyString.check(
       encode: (value) => resolveProviderInstanceIcon(value) ?? value,
     }),
   ),
+);
 export type ProviderInstanceIcon = typeof ProviderInstanceIcon.Type;
 /** What drivers receive: every secret reference has been read into a plain value. */
 export type ResolvedProviderInstanceEnvironment = ReadonlyArray<
