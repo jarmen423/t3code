@@ -1,6 +1,5 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { HermesSettings } from "@t3tools/provider-hermes/settings";
-import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -9,6 +8,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
@@ -45,7 +45,7 @@ export type HermesDriverEnv =
   | IdAllocator.IdAllocatorV2
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | FileSystem.FileSystem
   | Path.Path
   | ProviderEventLoggers
@@ -74,8 +74,8 @@ export const HermesDriver: ProviderDriver<HermesSettings, HermesDriverEnv> = {
     enabled,
     config,
   }) {
-    const crypto = yield* Crypto.Crypto;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const secureRandom = yield* SecureRandom.SecureRandom;
     const serverConfig = yield* ServerConfig;
     const processEnv = yield* mergeProviderInstanceEnvironment(environment);
     const continuationIdentity = defaultProviderContinuationIdentity({
@@ -104,7 +104,7 @@ export const HermesDriver: ProviderDriver<HermesSettings, HermesDriverEnv> = {
         childProcessSpawner: spawner,
         cwd: serverConfig.stateDir,
         clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
-      }).pipe(Effect.provideService(Crypto.Crypto, crypto));
+      }).pipe(Effect.provideService(SecureRandom.SecureRandom, secureRandom));
       const initialize = yield* runtime.initialize();
       const session =
         includeSessionMetadata && resolveHermesAuthMethodId(initialize) !== undefined

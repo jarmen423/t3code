@@ -1,6 +1,5 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { DevinSettings } from "@t3tools/provider-devin/settings";
-import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -9,6 +8,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
@@ -47,7 +47,7 @@ export type DevinDriverEnv =
   | IdAllocator.IdAllocatorV2
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | FileSystem.FileSystem
   | Path.Path
   | ProviderEventLoggers
@@ -76,8 +76,8 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
     enabled,
     config,
   }) {
-    const crypto = yield* Crypto.Crypto;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const secureRandom = yield* SecureRandom.SecureRandom;
     const serverConfig = yield* ServerConfig;
     const processEnv = yield* mergeProviderInstanceEnvironment(environment);
     const continuationIdentity = defaultProviderContinuationIdentity({
@@ -132,7 +132,7 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
         childProcessSpawner: spawner,
         cwd: serverConfig.stateDir,
         clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
-      }).pipe(Effect.provideService(Crypto.Crypto, crypto));
+      }).pipe(Effect.provideService(SecureRandom.SecureRandom, secureRandom));
       const initialize = yield* runtime.initialize();
       const authStatus = yield* probeAuthStatus;
       const version = yield* probeVersion;

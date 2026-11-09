@@ -1,4 +1,3 @@
-import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -24,7 +23,6 @@ export const makeDevinTextGeneration = Effect.fn("makeDevinTextGeneration")(func
   devinSettings: DevinSettings,
   environment: NodeJS.ProcessEnv = process.env,
 ) {
-  const crypto = yield* Crypto.Crypto;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   const runDevinJson: TextGenerationOperations.Runner = (request) => {
@@ -38,7 +36,7 @@ export const makeDevinTextGeneration = Effect.fn("makeDevinTextGeneration")(func
         childProcessSpawner: commandSpawner,
         cwd,
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
-      }).pipe(Effect.provideService(Crypto.Crypto, crypto));
+      });
 
       // Text generation is not interactive: a permission prompt would deadlock,
       // so every request is declined. Devin still answers with plain text.

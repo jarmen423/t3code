@@ -24,6 +24,11 @@ const devinProfile = process.env.T3_ACP_DEVIN === "1";
 const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
 const copilotModeId = (name: string) =>
   `https://agentclientprotocol.com/protocol/session-modes#${name}`;
+// Env reads stay out of Effect code (processEnvInEffect): a plain helper
+// the handlers call when they need the flag.
+const hermesUnconfigured = (): boolean =>
+  process.env.T3_ACP_HERMES_UNCONFIGURED === "1";
+
 const modeOptionCategory = process.env.T3_ACP_MODE_OPTION_CATEGORY ?? "mode";
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
@@ -649,7 +654,7 @@ const program = Effect.gen(function* () {
         const authMethods: Array<AcpCompat.AuthMethod> = [
           { type: "terminal", id: "hermes-setup", name: "Run hermes setup" },
         ];
-        if (process.env.T3_ACP_HERMES_UNCONFIGURED !== "1") {
+        if (!hermesUnconfigured()) {
           authMethods.unshift({ id: "openrouter", name: "OpenRouter" });
         }
         const response: AcpSchema.InitializeResponse = {

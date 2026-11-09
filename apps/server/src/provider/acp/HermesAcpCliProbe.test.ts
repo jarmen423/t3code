@@ -8,10 +8,12 @@
  * terminal `hermes-setup` entry. When only `hermes-setup` is advertised the
  * runtime skips `authenticate`, matching how an unconfigured install behaves.
  */
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Stream from "effect/Stream";
@@ -54,7 +56,7 @@ describe.runIf(process.env.T3_HERMES_ACP_PROBE === "1")("Hermes ACP CLI probe", 
       } else {
         expect(methodId).not.toBe(HERMES_SETUP_AUTH_METHOD_ID);
       }
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("starts a session with Hermes modes and provider-qualified models", () =>
@@ -72,7 +74,7 @@ describe.runIf(process.env.T3_HERMES_ACP_PROBE === "1")("Hermes ACP CLI probe", 
       expect(models).toBeDefined();
       expect(typeof models?.currentModelId).toBe("string");
       expect(models?.availableModels.length ?? 0).toBeGreaterThan(0);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("session/set_mode round-trips a native Hermes mode", () =>
@@ -89,7 +91,7 @@ describe.runIf(process.env.T3_HERMES_ACP_PROBE === "1")("Hermes ACP CLI probe", 
         sessionId: started.sessionId,
         modeId: target,
       });
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect.skipIf(process.env.T3_HERMES_LIVE_TURN !== "1")(
@@ -129,6 +131,6 @@ describe.runIf(process.env.T3_HERMES_ACP_PROBE === "1")("Hermes ACP CLI probe", 
         expect(result.stopReason).toBe("end_turn");
         expect(chunks.join("")).toContain("HERMES_T3_OK");
         yield* Fiber.interrupt(events);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });
