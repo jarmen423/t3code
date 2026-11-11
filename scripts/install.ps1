@@ -16,7 +16,7 @@
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$repo = "pingdotgg/t3code"
+$repo = "jarmen423/t3code"
 $baseUrl = if ($env:T3CODE_RELEASE_BASE_URL) { $env:T3CODE_RELEASE_BASE_URL.TrimEnd("/") } else { "https://github.com/$repo/releases/download" }
 $t3Home = if ($env:T3CODE_HOME) { $env:T3CODE_HOME } else { Join-Path $HOME ".t3" }
 $binDir = if ($env:T3CODE_INSTALL_BIN_DIR) { $env:T3CODE_INSTALL_BIN_DIR } else { Join-Path $HOME ".local\bin" }
@@ -128,7 +128,7 @@ $channel = if ($env:T3CODE_CHANNEL) { $env:T3CODE_CHANNEL } else { "stable" }
 $version = $env:T3CODE_VERSION
 if (-not $version) {
   $tagPattern = switch ($channel) {
-    "stable" { '^v\d+\.\d+\.\d+$' }
+    "stable" { '^v\d+\.\d+\.\d+(-hermes\.\d+)?$' }
     "nightly" { '^v\d+\.\d+\.\d+-nightly\.\d+\.\d+$' }
     "preview" { '^v\d+\.\d+\.\d+-preview\.\d+\.\d+$' }
     default { Fail "T3CODE_CHANNEL must be stable, nightly, or preview" }

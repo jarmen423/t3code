@@ -17,7 +17,7 @@
 # instead of fetching the release again.
 set -eu
 
-repo="pingdotgg/t3code"
+repo="jarmen423/t3code"
 base_url="${T3CODE_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
 t3_home="${T3CODE_HOME:-$HOME/.t3}"
 case "$t3_home" in
@@ -157,7 +157,7 @@ channel="${T3CODE_CHANNEL:-stable}"
 version="${T3CODE_VERSION:-}"
 if [ -z "$version" ]; then
   case "$channel" in
-    stable) tag_pattern='v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)' ;;
+    stable) tag_pattern='v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\(-hermes\.[0-9][0-9]*\)\{0,1\}\)' ;;
     nightly | preview) tag_pattern="v\([0-9][^\"]*-${channel}\.[0-9]*\.[0-9]*\)" ;;
     *) fail "T3CODE_CHANNEL must be stable, nightly, or preview" ;;
   esac
