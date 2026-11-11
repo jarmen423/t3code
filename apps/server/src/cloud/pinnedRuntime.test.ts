@@ -302,6 +302,34 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     }),
   );
 
+  it.effect("keeps an incomplete runtime when the release download fails", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-runtime-keep-" });
+      const finalPaths = pinnedRuntimePaths(path, baseDir, version, "linux");
+      yield* fs.makeDirectory(finalPaths.versionDir, { recursive: true });
+      yield* fs.writeFileString(path.join(finalPaths.versionDir, "partial"), "incomplete\n");
+
+      const error = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "linux",
+        arch: "x64",
+        httpClient: HttpClient.make((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 404 }))),
+        ),
+        runner: extractingRunner(fs, path),
+        validate: () => Effect.void,
+      }).pipe(Effect.flip);
+
+      assert.isTrue(isUnpublishedRelease(error));
+      assert.isTrue(yield* fs.exists(path.join(finalPaths.versionDir, "partial")));
+    }),
+  );
+
   it.effect("reuses a cached runtime under a mirror only while the mirror lists it", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
