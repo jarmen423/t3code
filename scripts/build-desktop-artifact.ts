@@ -3178,11 +3178,13 @@ function collectUnpackedAsarFiles(
   return output;
 }
 
-const countPayloadFiles = Effect.fn("desktopArtifact.countPayloadFiles")(function* (root: string) {
+const collectPayloadFiles = Effect.fn("desktopArtifact.collectPayloadFiles")(function* (
+  root: string,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const pendingDirectories = [root];
-  let count = 0;
+  const files: string[] = [];
 
   while (pendingDirectories.length > 0) {
     const directory = pendingDirectories.pop();
@@ -3194,12 +3196,12 @@ const countPayloadFiles = Effect.fn("desktopArtifact.countPayloadFiles")(functio
       if (stat.type === "Directory") {
         pendingDirectories.push(entryPath);
       } else if (stat.type === "File") {
-        count += 1;
+        files.push(path.relative(root, entryPath).split(path.sep).join("/"));
       }
     }
   }
 
-  return count;
+  return files.sort();
 });
 
 export const verifyWindowsPrimaryFffNativeLoad = Effect.fn(
@@ -3509,8 +3511,12 @@ export const validateWindowsPackagedPayload = Effect.fn(
     }
   }
 
-  const fileCount = yield* countPayloadFiles(packagedAppDir);
+  const payloadFiles = yield* collectPayloadFiles(packagedAppDir);
+  const fileCount = payloadFiles.length;
   if (fileCount > fileLimit) {
+    yield* Effect.logError(
+      `[desktop-artifact] Windows packaged payload files:\n${payloadFiles.join("\n")}`,
+    );
     return yield* new WindowsPackagedPayloadValidationError({
       reason: "file-limit-exceeded",
       packagedAppDir,
