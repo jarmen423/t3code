@@ -63,18 +63,21 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer home
 // regression: #22490
 describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer channel lookup", () => {
   it.each([
-    ["stable", "1.2.3"],
-    ["preview", "1.2.4-preview.20261019.50"],
-  ])("finds the newest %s release behind a full page of nightlies", async (channel, version) => {
+    { channel: "stable", version: "1.2.3", latestTag: "v1.2.3" },
+    { channel: "stable", version: "1.2.4-hermes.5", latestTag: "v1.2.4-hermes.5" },
+    { channel: "preview", version: "1.2.4-preview.20261019.50", latestTag: "v1.2.3" },
+  ])(
+    "finds the newest $channel release at $version behind a full page of nightlies",
+    async ({ channel, version, latestTag }) => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-index-"));
     const target = NodePath.join(root, "home/runtime/versions", version);
     const server = NodeHttp.createServer((request, response) => {
       const url = new URL(request.url ?? "/", "http://fixture");
       const body =
-        url.pathname === "/pingdotgg/t3code/releases/latest" &&
+        url.pathname === "/jarmen423/t3code/releases/latest" &&
         request.headers.accept === "application/json"
-          ? { tag_name: "v1.2.3" }
-          : url.pathname === "/repos/pingdotgg/t3code/releases"
+          ? { tag_name: latestTag }
+          : url.pathname === "/repos/jarmen423/t3code/releases"
             ? { "1": nightlies, "2": [{ tag_name: `v${version}` }, { tag_name: "v1.2.3" }] }[
                 url.searchParams.get("page") ?? ""
               ]
