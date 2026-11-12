@@ -44,6 +44,7 @@ describe("buildThreadActionMenuItems", () => {
             "rename",
             "regenerate-title",
             "auto-settle",
+            "import-agent-threads",
             "archive",
             "delete",
           ]
@@ -54,6 +55,7 @@ describe("buildThreadActionMenuItems", () => {
             "rename",
             "regenerate-title",
             "auto-settle",
+            "import-agent-threads",
             "archive",
             "delete",
           ];

@@ -67,21 +67,15 @@ export const ProviderInstanceEnvironment = Schema.Array(ProviderInstanceEnvironm
 export type ProviderInstanceEnvironment = typeof ProviderInstanceEnvironment.Type;
 
 /** Character cap for a stored icon URI, including the data-URI prefix. */
-export const PROVIDER_INSTANCE_ICON_MAX_CHARS = 48_000;
+const PROVIDER_INSTANCE_ICON_MAX_CHARS = 48_000;
 /** Decoded byte cap for a base64 PNG or SVG icon. */
 export const PROVIDER_INSTANCE_ICON_MAX_DECODED_BYTES = 32 * 1024;
 
 const PROVIDER_INSTANCE_DATA_ICON_PATTERN =
   /^data:image\/(?:png|svg\+xml);base64,((?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?)$/;
-/**
- * Accept a user-configured instance icon, or return null.
- *
- * Registry icons stay on the official CDN allowlist. This check is only for
- * the icon a user sets on one provider instance: a base64 PNG or SVG data
- * URI, or an https URL with no credentials. Data URIs must be base64 so the
- * value cannot carry raw markup, and callers render the result as an image,
- * never as HTML or inline SVG.
- */
+/** Accept a user-configured instance icon: a base64 PNG/SVG data URI or a
+ * credential-free https URL, else null. Render the result as an image,
+ * never as HTML or inline SVG. */
 export function resolveProviderInstanceIcon(icon: string | null | undefined): string | null {
   if (icon === null || icon === undefined) return null;
   const value = icon.trim();
