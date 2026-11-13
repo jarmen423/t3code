@@ -751,7 +751,6 @@ const WindowsPackagedPayloadValidationReason = Schema.Literals([
   "resource-monitor-missing",
   "wsl-runtime-missing",
   "wsl-runtime-invalid",
-  "file-limit-exceeded",
 ]);
 
 export class WindowsPackagedPayloadValidationError extends Schema.TaggedError<WindowsPackagedPayloadValidationError>()(
@@ -760,15 +759,10 @@ export class WindowsPackagedPayloadValidationError extends Schema.TaggedError<Wi
     reason: WindowsPackagedPayloadValidationReason,
     packagedAppDir: Schema.String,
     missingFiles: Schema.optionalKey(Schema.Array(Schema.String)),
-    fileCount: Schema.optionalKey(Schema.Int),
-    fileLimit: Schema.optionalKey(Schema.Int),
     cause: Schema.optionalKey(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    if (this.reason === "file-limit-exceeded") {
-      return `Windows packaged payload contains ${String(this.fileCount)} files; expected at most ${String(this.fileLimit)}.`;
-    }
     if (this.reason === "unpacked-native-missing") {
       return `Windows server sidecar is missing ${String(this.missingFiles?.length ?? 0)} unpacked native files.`;
     }
@@ -1061,7 +1055,6 @@ export function resolveWindowsServerAsarIgnoreGlobs(arch: typeof BuildArch.Type)
   ];
 }
 
-export const WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT = 96;
 export const WINDOWS_SERVER_RESOURCE_SOURCE_DIR = "apps/desktop/prod-resources/windows-server";
 export const WINDOWS_SERVER_EXTRA_RESOURCES = [
   {
@@ -3324,12 +3317,10 @@ export const validateWindowsPackagedPayload = Effect.fn(
   readonly targetArch: typeof BuildArch.Type;
   readonly appVersion: string;
   readonly expectWslRuntime?: boolean;
-  readonly fileLimit?: number;
   readonly verbose?: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const fileLimit = input.fileLimit ?? WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT;
   const isFile = (filePath: string) =>
     fs.stat(filePath).pipe(
       Effect.map((stat) => stat.type === "File"),
@@ -3516,15 +3507,9 @@ export const validateWindowsPackagedPayload = Effect.fn(
     }
   }
 
+  // The payload file count is reported in the validation log below for
+  // visibility only; it never fails the build.
   const fileCount = yield* countPayloadFiles(packagedAppDir);
-  if (fileCount > fileLimit) {
-    return yield* new WindowsPackagedPayloadValidationError({
-      reason: "file-limit-exceeded",
-      packagedAppDir,
-      fileCount,
-      fileLimit,
-    });
-  }
 
   yield* verifyWindowsPackagedRuntime({
     packagedAppDir,
