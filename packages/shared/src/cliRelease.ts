@@ -5,6 +5,10 @@ import { compareSemverVersions } from "./semver.ts";
 
 const CLI_RELEASE_REPOSITORY = "jarmen423/t3code";
 export const CLI_RELEASES_PAGE_URL = `https://github.com/${CLI_RELEASE_REPOSITORY}/releases`;
+const CLI_INSTALL_SCRIPT_BASE_URL = `https://raw.githubusercontent.com/${CLI_RELEASE_REPOSITORY}/main/scripts`;
+export const CLI_INSTALL_SH_URL = `${CLI_INSTALL_SCRIPT_BASE_URL}/install.sh`;
+export const CLI_INSTALL_PS1_URL = `${CLI_INSTALL_SCRIPT_BASE_URL}/install.ps1`;
+export const DESKTOP_RELEASE_REPOSITORY = CLI_RELEASE_REPOSITORY;
 export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
 export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
 
