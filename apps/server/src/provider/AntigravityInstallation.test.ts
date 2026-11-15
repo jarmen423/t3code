@@ -1032,6 +1032,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
           executablePath: alias,
           harnessPath: null,
         });
+        // Without an override, the agy CLI on PATH outranks an older managed release.
+        const { installation: withManaged } = yield* makeHarness({ previous: true });
+        yield* expectPreviousRelease(withManaged);
+        expect(yield* withManaged.resolve(undefined, { PATH: cliDirectory })).toMatchObject({
+          executablePath: alias,
+          harnessPath: null,
+          source: "path",
+        });
         expect(yield* installation.resolve(other).pipe(Effect.flip)).toMatchObject({
           operation: "resolve",
         });

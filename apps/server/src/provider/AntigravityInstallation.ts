@@ -391,6 +391,11 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           "The custom Antigravity executable is missing or not executable, or it needs a localharness_external sibling. The agy CLI does not.",
         );
       }
+      // The managed ACP bundle tops out at 1.4.5, and older runtimes withhold non-Gemini models.
+      for (const candidate of yield* commandCandidates("agy", processEnvironment)) {
+        const selected = yield* fromExternal(candidate, "path");
+        if (selected) return selected;
+      }
       if (yield* fs.exists(activePath)) {
         const active = yield* readRecord(activePath, ActiveRelease);
         const installed = yield* completedRelease(active.releaseId);
