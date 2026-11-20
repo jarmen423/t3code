@@ -36,6 +36,8 @@ const advertisedCommandNames = (process.env.T3_ACP_AVAILABLE_COMMANDS ?? "")
   .map((name) => name.trim())
   .filter((name) => name.length > 0);
 const loadedCommandNames = process.env.T3_ACP_LOADED_COMMANDS?.split(",").filter(Boolean);
+// omp advertises a loaded session's commands only after it answers session/load.
+const loadedCommandsDelayMs = Number(process.env.T3_ACP_LOADED_COMMANDS_DELAY_MS ?? "");
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
@@ -79,6 +81,11 @@ const failLoadSession = process.env.T3_ACP_FAIL_LOAD_SESSION === "1";
 const failLoadSessionAfterConfigReplay =
   process.env.T3_ACP_FAIL_LOAD_SESSION_AFTER_CONFIG_REPLAY === "1";
 const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
+const delayLoadSessionAfterReplay = process.env.T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY === "1";
+const loadSessionDelayMs = Number(process.env.T3_ACP_LOAD_SESSION_DELAY_MS ?? "5000");
+const modeNotifiedBeforeDelayedLoadReply = process.env.T3_ACP_NOTIFY_MODE_BEFORE_LOAD_REPLY;
+const holdSetConfigOptionUntilLoadReply =
+  process.env.T3_ACP_HOLD_SET_CONFIG_OPTION_UNTIL_LOAD_REPLY === "1";
 const loadReplyDelayMs = Number(process.env.T3_ACP_LOAD_REPLY_DELAY_MS ?? "0");
 const loadNeverReplies = process.env.T3_ACP_LOAD_NEVER_REPLIES === "1";
 const rejectPromptUntilLoaded = process.env.T3_ACP_REJECT_PROMPT_UNTIL_LOADED === "1";
@@ -623,6 +630,7 @@ const program = Effect.gen(function* () {
     });
   };
 
+  const delayedLoadReplied = yield* Deferred.make<void>();
   const publishAntigravityCommands = (targetSessionId: string) =>
     agent.client.sessionUpdate({
       sessionId: targetSessionId,
@@ -876,13 +884,21 @@ const program = Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       sessionsLoading.add(requestedSessionId);
       if (loadedCommandNames !== undefined) {
-        yield* agent.client.sessionUpdate({
+        const publishLoadedCommands = agent.client.sessionUpdate({
           sessionId: requestedSessionId,
           update: {
             sessionUpdate: "available_commands_update",
             availableCommands: loadedCommandNames.map((name) => ({ name, description: name })),
           },
         });
+        if (Number.isFinite(loadedCommandsDelayMs)) {
+          yield* Effect.sleep(`${loadedCommandsDelayMs} millis`).pipe(
+            Effect.andThen(publishLoadedCommands),
+            Effect.forkDetach,
+          );
+        } else {
+          yield* publishLoadedCommands;
+        }
       }
       if (failLoadSession) {
         return yield* AcpError.AcpRequestError.internalError("Mock load session failure");
@@ -905,6 +921,33 @@ const program = Effect.gen(function* () {
         return yield* AcpError.AcpRequestError.internalError(
           "Mock load session failure after config replay",
         );
+      }
+      if (delayLoadSessionAfterReplay) {
+        emitLoadReplayNotifications(requestedSessionId);
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "user_message_chunk",
+            messageId: "mock-user-message",
+            content: { type: "text", text: "replay-tail" },
+          },
+        });
+        // Answer with the configuration as of the load, like an agent whose
+        // response was built before later selections landed.
+        const loadedConfigOptions = configOptions();
+        if (modeNotifiedBeforeDelayedLoadReply !== undefined) {
+          yield* Effect.sleep(loadSessionDelayMs / 2);
+          currentModeId = modeNotifiedBeforeDelayedLoadReply;
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: { sessionUpdate: "current_mode_update", currentModeId },
+          });
+        }
+        yield* Effect.sleep(loadSessionDelayMs);
+        yield* Deferred.succeed(delayedLoadReplied, undefined);
+        return {
+          configOptions: loadedConfigOptions,
+        };
       }
       if (emitLoadReplay) {
         emitLoadReplayNotifications(requestedSessionId);
@@ -1010,6 +1053,12 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleSetSessionConfigOption((request) =>
     Effect.gen(function* () {
+      if (holdSetConfigOptionUntilLoadReply) {
+        // Like an agent that serves requests in order: the delayed load reply
+        // goes out first, then this one.
+        yield* Deferred.await(delayedLoadReplied);
+        yield* Effect.sleep(100);
+      }
       if (failSetModeConfigOption && request.configId === "mode") {
         return yield* AcpError.AcpRequestError.invalidParams(
           "Mock invalid params for session/set_config_option",
@@ -1457,6 +1506,16 @@ const program = Effect.gen(function* () {
             status: "completed",
             rawInput: { path: "src/env.ts" },
             locations: [{ path: "src/env.ts" }],
+          },
+          // Antigravity reports an image read with only a text result, never the image bytes.
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "structured-image-read",
+            title: "Read `mockup.png`",
+            kind: "read",
+            status: "completed",
+            rawInput: { file_path: "/workspace/mockup.png", start_line: 0, end_line: 799 },
+            rawOutput: "View mockup.png",
           },
           {
             sessionUpdate: "tool_call_update",
