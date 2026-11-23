@@ -28,9 +28,11 @@ import {
   type BackupSpaceProbe,
   readServiceState,
   registerServiceTask,
+  resolveWindowsAccountDomain,
   serviceLauncherIsRunning,
   serviceLauncherIsServing,
   serviceLauncherLockPath,
+  serviceTaskName,
   stateDirOwned,
   writeServiceState,
 } from "./serviceLauncher.ts";
@@ -201,6 +203,18 @@ const fakeServiceUnit = (
     };
     return unit;
   });
+
+it("resolves the Windows account domain past the workgroup name", () => {
+  expect(resolveWindowsAccountDomain("CORP", "PC")).toBe("CORP");
+  expect(resolveWindowsAccountDomain("WORKGROUP", "JARMEN")).toBe("JARMEN");
+  expect(resolveWindowsAccountDomain("WorkGroup", "JARMEN")).toBe("JARMEN");
+  expect(resolveWindowsAccountDomain("", "JARMEN")).toBe("JARMEN");
+  expect(resolveWindowsAccountDomain("WORKGROUP", "")).toBe("");
+  expect(resolveWindowsAccountDomain("", "")).toBe("");
+  expect(serviceTaskName(resolveWindowsAccountDomain("WORKGROUP", "JARMEN"), "jfrie")).toBe(
+    "t3code-JARMEN-jfrie",
+  );
+});
 
 it.layer(NodeServices.layer)("service state persistence", (it) => {
   it.effect.each([

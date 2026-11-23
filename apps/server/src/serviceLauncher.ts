@@ -201,7 +201,10 @@ async function serviceUnitFromEnvironment(
     const localAppData = env.LOCALAPPDATA?.trim();
     if (!localAppData) return undefined;
     const path = NodePath.win32.join(localAppData, "t3code", unitName);
-    const taskName = serviceTaskName(env.USERDOMAIN ?? "", env.USERNAME ?? "");
+    const taskName = serviceTaskName(
+      resolveWindowsAccountDomain(env.USERDOMAIN ?? "", env.COMPUTERNAME ?? ""),
+      env.USERNAME ?? "",
+    );
     return { path, reload: () => registerServiceTask(path, taskName) };
   }
   const home = env.HOME?.trim();
@@ -792,6 +795,15 @@ async function terminateChild(
 
 /** Task Scheduler names are machine-wide, so each Windows account runs its own task. */
 export const serviceTaskName = (domain: string, userName: string) => `t3code-${domain}-${userName}`;
+
+// USERDOMAIN is the workgroup name, not a domain, on machines that never joined
+// one; Task Scheduler cannot map `WORKGROUP\<user>` to a SID, so the computer
+// name stands in for the account domain there.
+export const resolveWindowsAccountDomain = (userDomain: string, computerName: string): string => {
+  const domain = userDomain.trim();
+  if (domain !== "" && domain.toLowerCase() !== "workgroup") return domain;
+  return computerName.trim();
+};
 
 export const serviceLauncherLockPath = (baseDir: string) =>
   NodePath.join(baseDir, "runtime", SERVICE_LAUNCHER_LOCK_FILE);
@@ -1642,7 +1654,10 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
     // Agents the server left behind keep the console host, and so the task, running; ending it
     // lets the next repeating trigger start the service again.
     if (windows && options.serviceUnit !== undefined) {
-      const taskName = serviceTaskName(process.env.USERDOMAIN ?? "", process.env.USERNAME ?? "");
+      const taskName = serviceTaskName(
+        resolveWindowsAccountDomain(process.env.USERDOMAIN ?? "", process.env.COMPUTERNAME ?? ""),
+        process.env.USERNAME ?? "",
+      );
       NodeChildProcess.spawnSync("schtasks", ["/End", "/TN", taskName], {
         stdio: "ignore",
         windowsHide: true,

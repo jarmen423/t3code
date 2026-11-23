@@ -20,6 +20,7 @@ import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 import * as ProcessRunner from "../processRunner.ts";
 import { acquireServiceSelectionLock } from "./serviceSelectionLock.ts";
 import {
+  resolveWindowsAccountDomain,
   serviceLauncherIsRunning,
   serviceLauncherLockPath,
   serviceTaskName,
@@ -884,13 +885,14 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 
   const windowsVariable = (name: string) =>
     platform === "win32" ? Config.String(name).pipe(Config.withDefault("")) : Config.succeed("");
+  const windowsDomain = resolveWindowsAccountDomain(
+    yield* windowsVariable("USERDOMAIN"),
+    yield* windowsVariable("COMPUTERNAME"),
+  );
   const windowsSession: WindowsSession = {
     localAppData: yield* windowsVariable("LOCALAPPDATA"),
-    userId: `${yield* windowsVariable("USERDOMAIN")}\\${yield* windowsVariable("USERNAME")}`,
-    taskName: serviceTaskName(
-      yield* windowsVariable("USERDOMAIN"),
-      yield* windowsVariable("USERNAME"),
-    ),
+    userId: `${windowsDomain}\\${yield* windowsVariable("USERNAME")}`,
+    taskName: serviceTaskName(windowsDomain, yield* windowsVariable("USERNAME")),
     systemRoot: (yield* windowsVariable("SystemRoot")) || "C:\\Windows",
   };
   // The unit is per user, so the launcher to stop is the one serving the installed unit's home.
