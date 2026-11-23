@@ -643,6 +643,9 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
     arch: input.arch,
     version: input.version,
   });
+  // A runtime staged straight from this archive must already count as a
+  // completed pinned runtime, or `ensure_installed` replaces it on sight.
+  yield* fs.writeFileString(path.join(contentDir, ".install-complete"), `${input.version}\n`);
 
   const executablePath = path.join(contentDir, executableName);
   if (input.platform === "linux") {
